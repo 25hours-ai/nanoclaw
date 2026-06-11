@@ -222,6 +222,35 @@ export function resolveProviderName(
   return (sessionProvider || containerConfigProvider || 'claude').toLowerCase();
 }
 
+const DEFAULT_PIDS_LIMIT = 2048;
+
+/**
+ * Build container hardening flags. Hardcoded safe defaults
+ * (no-new-privileges, cap-drop=ALL, pids-limit=2048, no memory cap),
+ * overridable per-group via container.json `security`. Pure so the
+ * defaults/override precedence is unit-testable without spawning.
+ */
+export function securityArgs(security?: import('./container-config.js').SecurityConfig): string[] {
+  const args: string[] = [];
+
+  if (security?.noNewPrivileges ?? true) {
+    args.push('--security-opt', 'no-new-privileges');
+  }
+
+  const capDrop = security?.capDrop ?? ['ALL'];
+  for (const cap of capDrop) args.push('--cap-drop', cap);
+
+  const capAdd = security?.capAdd ?? [];
+  for (const cap of capAdd) args.push('--cap-add', cap);
+
+  const pids = security?.pidsLimit === undefined ? DEFAULT_PIDS_LIMIT : security.pidsLimit;
+  if (pids != null) args.push('--pids-limit', String(pids));
+
+  if (security?.memory) args.push('--memory', security.memory);
+
+  return args;
+}
+
 function resolveProviderContribution(
   session: Session,
   agentGroup: AgentGroup,
@@ -406,6 +435,9 @@ async function buildContainerArgs(
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
+
+  // Container hardening — privilege flags + generous safety caps.
+  args.push(...securityArgs(containerConfig.security));
 
   // Environment — only vars read by code we don't own.
   // Everything NanoClaw-specific is in container.json (read by runner at startup).

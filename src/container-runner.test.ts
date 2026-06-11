@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderName } from './container-runner.js';
+import { resolveProviderName, securityArgs } from './container-runner.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -23,5 +23,38 @@ describe('resolveProviderName', () => {
   it('treats empty string as unset (falls through)', () => {
     expect(resolveProviderName('', 'opencode')).toBe('opencode');
     expect(resolveProviderName(null, '')).toBe('claude');
+  });
+});
+
+describe('securityArgs', () => {
+  it('emits safe defaults when no override given', () => {
+    const args = securityArgs(undefined);
+    expect(args).toContain('--security-opt');
+    expect(args).toContain('no-new-privileges');
+    expect(args).toContain('--cap-drop');
+    expect(args).toContain('ALL');
+    expect(args.join(' ')).toContain('--pids-limit 2048');
+    expect(args.join(' ')).not.toContain('--cap-add');
+    expect(args.join(' ')).not.toContain('--memory');
+  });
+
+  it('honors capAdd override', () => {
+    const args = securityArgs({ capAdd: ['SYS_ADMIN'] });
+    expect(args.join(' ')).toContain('--cap-add SYS_ADMIN');
+  });
+
+  it('omits pids-limit when explicitly null', () => {
+    const args = securityArgs({ pidsLimit: null });
+    expect(args.join(' ')).not.toContain('--pids-limit');
+  });
+
+  it('adds a memory cap when set', () => {
+    const args = securityArgs({ memory: '4g' });
+    expect(args.join(' ')).toContain('--memory 4g');
+  });
+
+  it('drops no-new-privileges when disabled', () => {
+    const args = securityArgs({ noNewPrivileges: false });
+    expect(args.join(' ')).not.toContain('no-new-privileges');
   });
 });
