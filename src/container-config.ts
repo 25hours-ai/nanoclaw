@@ -29,6 +29,15 @@ export interface AdditionalMountConfig {
   readonly?: boolean;
 }
 
+/** Per-group container hardening overrides. Absent fields fall back to hardcoded defaults. */
+export interface SecurityConfig {
+  capDrop?: string[];
+  capAdd?: string[];
+  pidsLimit?: number | null;
+  memory?: string | null;
+  noNewPrivileges?: boolean;
+}
+
 /** Shape of the materialized `container.json` file read by the container runner. */
 export interface ContainerConfig {
   mcpServers: Record<string, McpServerConfig>;
@@ -43,6 +52,7 @@ export interface ContainerConfig {
   maxMessagesPerPrompt?: number;
   model?: string;
   effort?: string;
+  security?: SecurityConfig;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -63,6 +73,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     maxMessagesPerPrompt: row.max_messages_per_prompt ?? undefined,
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
+    security: row.security_json ? (JSON.parse(row.security_json) as SecurityConfig) : undefined,
   };
 }
 
