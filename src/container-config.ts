@@ -33,6 +33,7 @@ export interface AdditionalMountConfig {
 export interface SecurityConfig {
   capDrop?: string[];
   capAdd?: string[];
+  // Tri-state: undefined → use hardcoded default; null → omit the flag (no limit); value → apply it.
   pidsLimit?: number | null;
   memory?: string | null;
   noNewPrivileges?: boolean;

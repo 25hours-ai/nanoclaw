@@ -33,6 +33,7 @@ import {
   deletePendingQuestion,
   ensureContainerConfig,
   getContainerConfig,
+  createContainerConfig,
 } from './index.js';
 
 function now() {
@@ -440,5 +441,31 @@ describe('container configs', () => {
     const row = getContainerConfig('ag-sec');
     expect(row).toBeDefined();
     expect(row!.security_json).toBeNull();
+  });
+
+  it('createContainerConfig persists cli_scope and security_json', () => {
+    createAgentGroup({ id: 'ag-full', name: 'Full', folder: 'full', agent_provider: null, created_at: now() });
+    const secJson = JSON.stringify({ capDrop: ['ALL'], pidsLimit: 256 });
+    createContainerConfig({
+      agent_group_id: 'ag-full',
+      provider: null,
+      model: null,
+      effort: null,
+      image_tag: null,
+      assistant_name: null,
+      max_messages_per_prompt: null,
+      skills: '["all"]',
+      mcp_servers: '{}',
+      packages_apt: '[]',
+      packages_npm: '[]',
+      additional_mounts: '[]',
+      cli_scope: 'global',
+      security_json: secJson,
+      updated_at: now(),
+    });
+    const row = getContainerConfig('ag-full');
+    expect(row).toBeDefined();
+    expect(row!.cli_scope).toBe('global');
+    expect(row!.security_json).toBe(secJson);
   });
 });
