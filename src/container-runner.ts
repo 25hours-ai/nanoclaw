@@ -234,7 +234,7 @@ export function securityArgs(security?: import('./container-config.js').Security
   const args: string[] = [];
 
   if (security?.noNewPrivileges ?? true) {
-    args.push('--security-opt', 'no-new-privileges');
+    args.push('--security-opt', 'no-new-privileges:true');
   }
 
   const capDrop = security?.capDrop ?? ['ALL'];
@@ -244,7 +244,7 @@ export function securityArgs(security?: import('./container-config.js').Security
   for (const cap of capAdd) args.push('--cap-add', cap);
 
   const pids = security?.pidsLimit === undefined ? DEFAULT_PIDS_LIMIT : security.pidsLimit;
-  if (pids != null) args.push('--pids-limit', String(pids));
+  if (pids != null && pids > 0) args.push('--pids-limit', String(pids));
 
   if (security?.memory) args.push('--memory', security.memory);
 

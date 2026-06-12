@@ -30,7 +30,7 @@ describe('securityArgs', () => {
   it('emits safe defaults when no override given', () => {
     const args = securityArgs(undefined);
     expect(args).toContain('--security-opt');
-    expect(args).toContain('no-new-privileges');
+    expect(args).toContain('no-new-privileges:true');
     expect(args).toContain('--cap-drop');
     expect(args).toContain('ALL');
     expect(args.join(' ')).toContain('--pids-limit 2048');
@@ -56,5 +56,13 @@ describe('securityArgs', () => {
   it('drops no-new-privileges when disabled', () => {
     const args = securityArgs({ noNewPrivileges: false });
     expect(args.join(' ')).not.toContain('no-new-privileges');
+  });
+
+  it('omits pids-limit when set to 0 (avoids cgroups v2 spawn crash)', () => {
+    expect(securityArgs({ pidsLimit: 0 }).join(' ')).not.toContain('--pids-limit');
+  });
+
+  it('omits memory when explicitly null', () => {
+    expect(securityArgs({ memory: null }).join(' ')).not.toContain('--memory');
   });
 });
