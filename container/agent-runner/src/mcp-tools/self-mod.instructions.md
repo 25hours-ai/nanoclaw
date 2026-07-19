@@ -22,4 +22,13 @@ Use **`add_mcp_server`** to add an MCP server to your configuration. Browse avai
 add_mcp_server({ name: "memory", command: "pnpm", args: ["dlx", "@modelcontextprotocol/server-memory"] })
 ```
 
+Remote Streamable HTTP servers use an HTTPS URL instead of a command:
+
+```
+add_mcp_server({ name: "remote", url: "https://example.com/mcp" })
+```
+
+Use the bare HTTPS endpoint. URLs with credentials, query parameters, or
+fragments are rejected; authentication belongs in OneCLI.
+
 Do not ask the user to give you credentials or tell them how to create credentials (OAuth, API keys, etc.) — NEVER fabricate credential setup instructions. Credentials are handled by the OneCLI gateway. Use `"onecli-managed"` as the placeholder value for any credential env vars or config fields. After the MCP server is installed and the container restarts, load `/onecli-gateway` for the full credential-handling flow (connect URLs, stubs, error recovery).

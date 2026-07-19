@@ -30,7 +30,7 @@ standing brief and marks the folder as a template.
 │   │                          #           CLAUDE.md/AGENTS.md every spawn
 │   └── additional_context/    # optional: extra .md files
 │       └── *.md
-├── .mcp.json             # optional: { "mcpServers": { ... } } — command + args, NO secrets
+├── .mcp.json             # optional: local command or remote HTTPS MCP servers, NO secrets
 ├── skills/<name>/        # optional: one folder per skill (SKILL.md + references/), copied whole
 └── README.md             # recommended: per-template docs
 ```
@@ -44,6 +44,9 @@ Notes:
 - **No provider, no model, no packages.** A template is instructions + MCP
   servers + skills. The agent's runtime/provider is chosen separately
   (`ncl groups config update --provider …` or during setup).
+- **MCP transport is explicit.** Local servers use `command` + `args`; remote
+  Streamable HTTP servers use `type: "http"` + an HTTPS `url` without userinfo,
+  query parameters, or fragments. The transport is not inferred from `url`.
 - **No secrets.** `.mcp.json` carries launch config only; credentials are
   injected by the credentials proxy at request time. If an MCP server refuses
   to boot without an env var, use a placeholder value — never a real key.

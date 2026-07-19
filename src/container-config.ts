@@ -17,11 +17,74 @@ import { getAgentGroup } from './db/agent-groups.js';
 import { isValidTimezone } from './timezone.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 
-export interface McpServerConfig {
+export interface McpStdioServerConfig {
+  type?: 'stdio';
   command: string;
   args?: string[];
   env?: Record<string, string>;
   instructions?: string;
+}
+
+export interface McpHttpServerConfig {
+  type: 'http';
+  url: string;
+  instructions?: string;
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+
+/** Parse one CLI or approval payload into the persisted MCP config shape. */
+export function parseMcpServerConfig(input: Record<string, unknown>): McpServerConfig {
+  const command = typeof input.command === 'string' && input.command.trim() ? input.command : undefined;
+  const url = typeof input.url === 'string' && input.url.trim() ? input.url.trim() : undefined;
+  if ((command === undefined) === (url === undefined)) {
+    throw new Error('Provide exactly one of --command or --url');
+  }
+
+  const instructions = input.instructions;
+  if (instructions !== undefined && typeof instructions !== 'string') {
+    throw new Error('MCP instructions must be a string');
+  }
+
+  if (url) {
+    if (input.args !== undefined || input.env !== undefined) {
+      throw new Error('--args and --env are only valid with --command');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      throw new Error('--url must be a valid HTTPS URL', { cause: err });
+    }
+    if (parsed.protocol !== 'https:') throw new Error('--url must use HTTPS');
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error(
+        '--url must not contain credentials, query parameters, or fragments; use OneCLI for authentication',
+      );
+    }
+    return { type: 'http', url, ...(instructions === undefined ? {} : { instructions }) };
+  }
+
+  const args = input.args ?? [];
+  if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) {
+    throw new Error('--args must be a JSON array of strings');
+  }
+  const rawEnv = input.env ?? {};
+  if (typeof rawEnv !== 'object' || rawEnv === null || Array.isArray(rawEnv)) {
+    throw new Error('--env must be a JSON object with string values');
+  }
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawEnv)) {
+    if (typeof value !== 'string') throw new Error('--env must be a JSON object with string values');
+    env[key] = value;
+  }
+  if (!command) throw new Error('Provide exactly one of --command or --url');
+  return {
+    command,
+    args,
+    env,
+    ...(instructions === undefined ? {} : { instructions }),
+  };
 }
 
 export interface AdditionalMountConfig {

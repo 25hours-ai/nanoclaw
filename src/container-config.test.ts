@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { TIMEZONE } from './config.js';
-import { configFromDb, resolveGroupTimezone } from './container-config.js';
+import { configFromDb, parseMcpServerConfig, resolveGroupTimezone } from './container-config.js';
 import { createAgentGroup } from './db/agent-groups.js';
 import { closeDb, initTestDb } from './db/connection.js';
 import { ensureContainerConfig, getContainerConfig, updateContainerConfigScalars } from './db/container-configs.js';
@@ -53,5 +53,31 @@ describe('resolveGroupTimezone', () => {
 
     updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
     expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).timezone).toBeUndefined();
+  });
+});
+
+describe('parseMcpServerConfig', () => {
+  it('preserves stdio config and accepts HTTPS Streamable HTTP config', () => {
+    expect(parseMcpServerConfig({ command: 'pnpm', args: ['dlx', 'server'], env: { TOKEN: 'stub' } })).toEqual({
+      command: 'pnpm',
+      args: ['dlx', 'server'],
+      env: { TOKEN: 'stub' },
+    });
+    expect(parseMcpServerConfig({ url: 'https://mcp.example.com/mcp' })).toEqual({
+      type: 'http',
+      url: 'https://mcp.example.com/mcp',
+    });
+  });
+
+  it.each([
+    [{}, /exactly one/],
+    [{ command: 'server', url: 'https://mcp.example.com/mcp' }, /exactly one/],
+    [{ url: 'http://mcp.example.com/mcp' }, /HTTPS/],
+    [{ url: 'https://token@mcp.example.com/mcp' }, /credentials/],
+    [{ url: 'https://mcp.example.com/mcp?api_key=secret' }, /query parameters/],
+    [{ url: 'https://mcp.example.com/mcp#secret' }, /fragments/],
+    [{ url: 'https://mcp.example.com/mcp', env: {} }, /only valid with --command/],
+  ])('rejects invalid transport config %#', (input, message) => {
+    expect(() => parseMcpServerConfig(input)).toThrow(message);
   });
 });

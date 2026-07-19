@@ -2,9 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { parse } from 'yaml';
 
+import { parseMcpServerConfig, type McpServerConfig } from '../container-config.js';
+
 /** A parsed template folder. Pure data — no DB, no side effects. */
 export interface Template {
-  mcpServers: Record<string, unknown>; // .mcp.json .mcpServers — name -> launch config
+  mcpServers: Record<string, McpServerConfig>; // .mcp.json .mcpServers — name -> validated launch config
   instructions: string; // context/instructions.md (required)
   contextExtras: { name: string; content: string }[]; // context/**/*.md except instructions.md; name relative to context/
   skills: { name: string; srcDir: string }[]; // skills/<name>/ real folders
@@ -35,7 +37,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 export function parseTemplate(dir: string): Template {
   if (!fs.existsSync(dir)) throw new Error(`Template folder not found: ${dir}`);
 
-  const mcpServers = asRecord(asRecord(readJson(path.join(dir, '.mcp.json'))).mcpServers);
+  const mcpServers: Record<string, McpServerConfig> = {};
+  for (const [name, config] of Object.entries(asRecord(asRecord(readJson(path.join(dir, '.mcp.json'))).mcpServers))) {
+    try {
+      const input = asRecord(config);
+      const server = parseMcpServerConfig(input);
+      if (
+        (server.type === 'http' && input.type !== 'http') ||
+        (server.type !== 'http' && input.type !== undefined && input.type !== 'stdio')
+      ) {
+        throw new Error('type must be "http" for url or "stdio" for command');
+      }
+      mcpServers[name] = server;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Template MCP server "${name}" is invalid: ${message}`, { cause: err });
+    }
+  }
 
   const instructionsFile = path.join(dir, 'context', 'instructions.md');
   if (!fs.existsSync(instructionsFile)) {

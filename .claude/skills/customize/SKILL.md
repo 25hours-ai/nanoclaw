@@ -64,7 +64,7 @@ Questions to ask:
 
 Implementation:
 - If a dedicated `/add-<service>-tool` skill exists, run it — it wires the MCP server and routes credentials through OneCLI so no raw keys reach the container.
-- Otherwise wire the MCP server into the agent group's container config: `ncl groups config add-mcp-server --id <group-id> --name <name> --command <cmd> [--args <json-array>] [--env <json-object>]`, then `ncl groups restart --id <group-id>` to take effect. From inside a container the agent uses the `add_mcp_server` self-mod tool, which requires one admin approval.
+- Otherwise wire the MCP server into the agent group's container config with either `--command <cmd> [--args <json-array>] [--env <json-object>]` for stdio or `--url <https-url>` for Streamable HTTP: `ncl groups config add-mcp-server --id <group-id> --name <name> ...`. Then run `ncl groups restart --id <group-id>` to take effect. From inside a container the agent uses the `add_mcp_server` self-mod tool, which requires one admin approval.
 
 ### Changing Assistant Behavior
 

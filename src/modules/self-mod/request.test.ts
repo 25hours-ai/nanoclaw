@@ -186,6 +186,20 @@ describe('add_mcp_server approval card', () => {
     expect(question).toContain('env: {}');
   });
 
+  it('shows an HTTPS server URL and preserves its normalized payload', async () => {
+    await submitAddMcpServer({ name: 'docs', url: 'https://mcp.example.com/mcp' }, session);
+
+    const question = lastQuestion();
+    expect(question).toContain('type: "http"');
+    expect(question).toContain('url: "https://mcp.example.com/mcp"');
+    const rows = getPendingApprovalsByAction('add_mcp_server');
+    expect(JSON.parse(rows[0].payload)).toEqual({
+      name: 'docs',
+      type: 'http',
+      url: 'https://mcp.example.com/mcp',
+    });
+  });
+
   it('cannot be spoofed by newlines embedded in payload values', async () => {
     await submitAddMcpServer(
       {
@@ -251,6 +265,18 @@ describe('add_mcp_server approval card', () => {
 });
 
 describe('add_mcp_server validation', () => {
+  it('rejects a credential-bearing URL before creating an approval', async () => {
+    await submitAddMcpServer({ name: 'bad', url: 'https://mcp.example.com/mcp?api_key=secret' }, session);
+
+    expect(expectRejected()).toMatch(/query parameters/);
+  });
+
+  it('rejects args and env for an HTTPS server before creating an approval', async () => {
+    await submitAddMcpServer({ name: 'bad', url: 'https://mcp.example.com/mcp', env: { TOKEN: 'secret' } }, session);
+
+    expect(expectRejected()).toMatch(/only valid with --command/);
+  });
+
   it('rejects a non-string element in args before creating an approval', async () => {
     await submitAddMcpServer({ name: 'bad', command: 'node', args: ['ok', 123] }, session);
     expectRejected();
