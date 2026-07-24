@@ -31,6 +31,7 @@ Additional resources (available under `global` scope only): messaging-groups, wi
 ### When to use
 
 - **Looking up your own config** — `ncl groups get` or `ncl groups config get` to see your container config.
+- **Setting your timezone** — if the user's timezone differs from yours (the `<context timezone="..."/>` header), `ncl groups config update --timezone <IANA id>` (`""` clears back to the install default). Requires approval; schedules follow immediately, message display after restart.
 - **Restarting your container** — `ncl groups restart` (with optional `--rebuild` and `--message`).
 - **Checking who's in your group** — `ncl members list`.
 - **Seeing your destinations** — `ncl destinations list`.

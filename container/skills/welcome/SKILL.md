@@ -68,6 +68,12 @@ There are no special commands. Users just talk naturally. If they want something
 
 ---
 
+## Timezone — mention briefly
+
+One line, woven in naturally: your schedules and timestamps follow the timezone in your `<context timezone="..."/>` header — the install default unless one was set for this agent — and it can be changed if they're somewhere else. If they want a change, run `ncl groups config update --timezone <IANA id>` (requires admin approval; schedules follow immediately, message display after the next restart).
+
+---
+
 ## Shape memory to the user's world (agent-internal, not part of the tour)
 
 From the first conversation onward, pay attention to the parts of the user's world that

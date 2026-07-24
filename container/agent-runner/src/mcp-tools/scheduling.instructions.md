@@ -20,6 +20,6 @@ ncl tasks delete ping-a25c
 
 Use good judgement on whether it's appropriate to check in with the user about the task prompt before task creation, and if so, whether to share verbatim or a description of it.
 
-`--process-after` accepts UTC timestamps or naive local timestamps interpreted in the instance timezone (shown in the `<context timezone="..."/>` header).
+`--process-after` accepts UTC timestamps or naive local timestamps interpreted in your group's timezone (shown in the `<context timezone="..."/>` header — the install default unless a group override is set).
 
 Run `ncl tasks create --help` for schedules, options, and pre-task gate scripts (checks that run before you wake).
