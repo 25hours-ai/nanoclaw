@@ -31,7 +31,6 @@ import {
   createPendingQuestion,
   getPendingQuestion,
   deletePendingQuestion,
-  ensureContainerConfig,
   getContainerConfig,
   createContainerConfig,
 } from './index.js';

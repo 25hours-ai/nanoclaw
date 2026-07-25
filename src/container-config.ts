@@ -29,7 +29,6 @@ export interface AdditionalMountConfig {
   readonly?: boolean;
 }
 
-
 /** Shape of the materialized `container.json` file read by the container runner. */
 export interface ContainerConfig {
   mcpServers: Record<string, McpServerConfig>;
