@@ -7,6 +7,11 @@ description: Deploy apps to Vercel. Use when asked to deploy, ship, or publish a
 
 You can deploy web applications to Vercel using the `vercel` CLI.
 
+**The CLI is not installed by default.** If `vercel` is not found, do not try to
+install it yourself — you cannot, and a global install from inside the container
+would be lost on the next restart. Tell the user the Vercel CLI is not in this
+agent's image and that running `/add-vercel` on the host adds it, then stop.
+
 **HARD RULE: You MUST NOT write HTML, CSS, or JavaScript yourself. When asked to build a website or web app, you MUST delegate to a Frontend Engineer subagent (see "Building Websites" section below). This is not optional. Violation wastes your context window on code that belongs in a separate agent.**
 
 ## Auth

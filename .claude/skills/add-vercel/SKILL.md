@@ -101,21 +101,34 @@ done
 
 ## Phase 4: Ensure Vercel CLI in Container Image
 
-The Vercel CLI is installed globally in the agent image via `container/Dockerfile`. Check for both halves of the install — the pinned version arg and the install line:
+The Vercel CLI is not in the agent image by default — this skill is what adds
+it. It goes in `container/cli-tools.json` as a json-merge rather than a
+Dockerfile edit, which is what keeps the change deterministic and removable.
 
 ```bash
-grep -Eq '^ARG VERCEL_VERSION=' container/Dockerfile && \
-  grep -Eq 'pnpm install -g "?vercel@\$\{VERCEL_VERSION\}"?' container/Dockerfile && \
-  echo "PRESENT" || echo "MISSING"
+grep -q '"vercel"' container/cli-tools.json && echo "PRESENT" || echo "MISSING"
 ```
 
-If `MISSING`, add a pinned `ARG VERCEL_VERSION=52.2.1` near the other version args and a `pnpm install -g "vercel@${VERCEL_VERSION}"` step in the global-install block of `container/Dockerfile`, then rebuild the image:
+If `MISSING`, append the entry, keeping an exact pinned version — the manifest
+rejects ranges, so the supply-chain policy still applies:
+
+```json
+{ "name": "vercel", "version": "52.2.1" }
+```
+
+Then apply it:
 
 ```bash
 ./container/build.sh
 ```
 
-If `PRESENT`, the CLI is already in the image — skip the rebuild.
+On an install that builds its own image, that rebuilds it. On one that fetches a
+published image, the same command adds Vercel as a single layer on top of the
+image already there, so the publisher's patched components underneath are kept —
+you are adding a tool, not replacing the runtime. The command says what that does
+and does not cover.
+
+If `PRESENT`, the CLI is already in the manifest — skip the rebuild.
 
 ## Phase 4b: Copy and Run the Dependency Guard
 
