@@ -132,14 +132,14 @@ If `PRESENT`, the CLI is already in the manifest — skip the rebuild.
 
 ## Phase 4b: Copy and Run the Dependency Guard
 
-The Vercel CLI is a globally-installed binary — not importable or typed — so a structural test guards the Dockerfile install. Copy it into the host test tree and run it:
+The Vercel CLI is a globally-installed binary — not importable or typed — so a structural test guards the install. Copy it into the host test tree and run it:
 
 ```bash
-cp .claude/skills/add-vercel/vercel-dockerfile.test.ts src/vercel-dockerfile.test.ts
-pnpm exec vitest run src/vercel-dockerfile.test.ts
+cp .claude/skills/add-vercel/vercel-manifest.test.ts src/vercel-manifest.test.ts
+pnpm exec vitest run src/vercel-manifest.test.ts
 ```
 
-The test parses `container/Dockerfile` and asserts both the `ARG VERCEL_VERSION=...` and the `pnpm install -g "vercel@${VERCEL_VERSION}"` line are present. It goes red if either is dropped or drifts.
+The test asserts both halves of the install: a pinned `vercel` entry in `container/cli-tools.json`, and the container skill at `container/skills/vercel-cli/`. Either alone is a broken install — a manifest entry with no skill leaves the agent a binary nobody told it about, and a skill with no entry tells it to run a command that is not there.
 
 ## Phase 5: Sync Skills to Running Agent Groups
 
