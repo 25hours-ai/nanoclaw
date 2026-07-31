@@ -113,6 +113,9 @@ export function publicationPlan({ expectedBody, release, tagState, targetSha, ve
     if (release.prerelease !== false) {
       throw new Error(`GitHub Release ${tag} is marked as a prerelease`);
     }
+    if (release.immutable !== true) {
+      throw new Error(`GitHub Release ${tag} is not immutable`);
+    }
     if (normalizedBody(release.body) !== normalizedBody(expectedBody)) {
       throw new Error(`GitHub Release ${tag} body does not match the assembled release notes`);
     }

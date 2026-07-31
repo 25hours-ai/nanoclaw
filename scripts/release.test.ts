@@ -84,6 +84,7 @@ describe('publication recovery', () => {
     body: expectedBody,
     draft: false,
     html_url: 'https://github.com/nanocoai/nanoclaw/releases/tag/v2.1.54',
+    immutable: true,
     name: 'v2.1.54',
     prerelease: false,
     tag_name: 'v2.1.54',
@@ -123,6 +124,12 @@ describe('publication recovery', () => {
       'prerelease',
       { release: { ...matchingRelease, prerelease: true }, tagState: annotatedTag },
       'marked as a prerelease',
+    ],
+    ['mutable release', { release: { ...matchingRelease, immutable: false }, tagState: annotatedTag }, 'not immutable'],
+    [
+      'release without immutable state',
+      { release: { ...matchingRelease, immutable: undefined }, tagState: annotatedTag },
+      'not immutable',
     ],
     ['changed body', { release: { ...matchingRelease, body: 'Different' }, tagState: annotatedTag }, 'body'],
   ])('rejects a mismatched %s', (_name, overrides, message) => {
