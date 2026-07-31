@@ -27,7 +27,7 @@ A release is cut by a maintainer publishing it. The trigger is a release PR that
 
 Before this workflow lands, a repository administrator must configure its two external safety controls:
 
-- Create a `release` environment with required reviewers, prevent self-review enabled, and a deployment branch policy that permits only `main`. Merely naming a missing environment in a workflow is not protection: GitHub creates it without protection rules on first use.
+- Create a `release` environment with code owner `gavrielc` as its only required reviewer, prevent self-review and administrator bypass, and add a deployment branch policy that permits only `main`. Merely naming a missing environment in a workflow is not protection: GitHub creates it without protection rules on first use.
 - Enable immutable releases under **Settings → General → Releases**. This locks the tag and assets after publication and applies only to releases published after the setting is enabled.
 
 Also create an active tag ruleset for `refs/tags/v*` that restricts updates and deletions, with no bypass. It closes the gap between the workflow pushing a tag and publishing the immutable release while still allowing a new tag to be created.
