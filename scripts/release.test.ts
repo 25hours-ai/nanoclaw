@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { assembleReleaseBody, changelogSection, publicationPlan, verifyRelease } from './release.mjs';
+
+const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+const repositoryChangelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
 
 const changelog = `# Changelog
 
@@ -29,6 +34,15 @@ describe('release metadata', () => {
     expect(() => verifyRelease({ changelog, packageVersion: '2.1.53', version: '2.1.54' })).toThrow('does not match');
   });
 
+  it('keeps recovered operator-facing configuration and Photon migration in the v2.1.54 record', () => {
+    const notes = changelogSection(repositoryChangelog, '2.1.54');
+
+    expect(notes).toContain('DEFAULT_AGENT_PROVIDER');
+    expect(notes).toContain('CONTAINER_CPU_LIMIT');
+    expect(notes).toContain('CONTAINER_MEMORY_LIMIT');
+    expect(notes).toContain('IMESSAGE_BACKEND=local|hosted');
+  });
+
   it('rejects missing, duplicate, empty, and prefixed versions', () => {
     expect(() => changelogSection(changelog, 'v2.1.54')).toThrow('without a v prefix');
     expect(() => changelogSection(changelog, '2.1.55')).toThrow('found 0');
@@ -38,6 +52,27 @@ describe('release metadata', () => {
     expect(() =>
       changelogSection(changelog.replace('- First curated change.\n- Second curated change.', 'No bullets.'), '2.1.54'),
     ).toThrow('at least one release-note bullet');
+  });
+});
+
+describe('release workflow safeguards', () => {
+  it('fails wrong-repository and wrong-ref dispatches instead of skipping verification', () => {
+    expect(releaseWorkflow).toContain('name: Verify dispatch source');
+    expect(releaseWorkflow).toContain('if [ "$DISPATCH_REPOSITORY" != "nanocoai/nanoclaw" ]');
+    expect(releaseWorkflow).toContain('if [ "$DISPATCH_REF" != "refs/heads/main" ]');
+    expect(releaseWorkflow).toContain('verify:\n    needs: dispatch');
+    expect(releaseWorkflow).not.toContain(
+      "if: github.repository == 'nanocoai/nanoclaw' && github.ref == 'refs/heads/main'",
+    );
+  });
+
+  it('checks the environment in both modes and keeps the exact reviewer authorization boundary', () => {
+    expect(releaseWorkflow).toContain('- name: Verify protected release environment\n        env:');
+    expect(releaseWorkflow).not.toContain(
+      "- name: Verify protected release environment\n        if: inputs.mode == 'publish'",
+    );
+    expect(releaseWorkflow).toContain('EXPECTED_REVIEWERS=\'["gavrielc","omri-maya"]\'');
+    expect(releaseWorkflow).toContain('Release reviewer roster drift');
   });
 });
 
