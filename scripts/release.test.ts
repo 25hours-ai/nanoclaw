@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { assembleReleaseBody, changelogSection, verifyRelease } from './release.mjs';
+import { assembleReleaseBody, changelogSection, publicationPlan, verifyRelease } from './release.mjs';
 
 const changelog = `# Changelog
 
@@ -73,5 +73,59 @@ describe('release body assembly', () => {
 
     expect(body).not.toContain('## New Contributors');
     expect(body).toContain('## Contributors');
+  });
+});
+
+describe('publication recovery', () => {
+  const targetSha = 'a'.repeat(40);
+  const expectedBody = 'Curated notes.\n';
+  const annotatedTag = { exists: true, type: 'tag', sha: targetSha };
+  const matchingRelease = {
+    body: expectedBody,
+    draft: false,
+    html_url: 'https://github.com/nanocoai/nanoclaw/releases/tag/v2.1.54',
+    name: 'v2.1.54',
+    prerelease: false,
+    tag_name: 'v2.1.54',
+  };
+
+  function plan(overrides: Record<string, unknown> = {}) {
+    return publicationPlan({
+      expectedBody,
+      release: null,
+      tagState: { exists: false },
+      targetSha,
+      version: '2.1.54',
+      ...overrides,
+    });
+  }
+
+  it('creates both objects when neither exists', () => {
+    expect(plan()).toBe('create-tag-and-release');
+  });
+
+  it('resumes release creation after an exact annotated tag was pushed', () => {
+    expect(plan({ tagState: annotatedTag })).toBe('create-release');
+  });
+
+  it('treats an exact published release as an idempotent success', () => {
+    expect(plan({ release: matchingRelease, tagState: annotatedTag })).toBe('already-published');
+  });
+
+  it.each([
+    ['lightweight tag', { tagState: { ...annotatedTag, type: 'commit' } }, 'not an annotated tag'],
+    ['wrong tag target', { tagState: { ...annotatedTag, sha: 'b'.repeat(40) } }, 'not workflow target'],
+    ['missing tag', { release: matchingRelease }, 'tag was not fetched'],
+    ['wrong release tag', { release: { ...matchingRelease, tag_name: 'v2.1.53' }, tagState: annotatedTag }, 'tag'],
+    ['wrong release title', { release: { ...matchingRelease, name: 'Wrong' }, tagState: annotatedTag }, 'title'],
+    ['draft release', { release: { ...matchingRelease, draft: true }, tagState: annotatedTag }, 'still a draft'],
+    [
+      'prerelease',
+      { release: { ...matchingRelease, prerelease: true }, tagState: annotatedTag },
+      'marked as a prerelease',
+    ],
+    ['changed body', { release: { ...matchingRelease, body: 'Different' }, tagState: annotatedTag }, 'body'],
+  ])('rejects a mismatched %s', (_name, overrides, message) => {
+    expect(() => plan(overrides)).toThrow(message);
   });
 });

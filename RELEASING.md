@@ -25,6 +25,13 @@ A release is cut by a maintainer publishing it. The trigger is a release PR that
 
 ## Publishing the release
 
+Before this workflow lands, a repository administrator must configure its two external safety controls:
+
+- Create a `release` environment with required reviewers, prevent self-review enabled, and a deployment branch policy that permits only `main`. Merely naming a missing environment in a workflow is not protection: GitHub creates it without protection rules on first use.
+- Enable immutable releases under **Settings → General → Releases**. This locks the tag and assets after publication and applies only to releases published after the setting is enabled.
+
+Also create an active tag ruleset for `refs/tags/v*` that restricts updates and deletions, with no bypass. It closes the gap between the workflow pushing a tag and publishing the immutable release while still allowing a new tag to be created.
+
 1. Open one release PR that:
    - bumps `package.json` to the exact version being released;
    - moves the curated user-facing notes from `Unreleased` to `## [X.Y.Z] - <YYYY-MM-DD>` in `CHANGELOG.md`;
@@ -36,7 +43,7 @@ A release is cut by a maintainer publishing it. The trigger is a release PR that
 5. Run the same workflow again with the same version, the same full SHA, and `publish`. The publish job re-verifies the immutable inputs, creates an annotated `vX.Y.Z` tag on that exact commit, assembles the curated notes plus contributor sections, and publishes the GitHub Release.
 6. Read back the tag target and release body from GitHub. Confirm `package.json`, the tag, the release title, and the changelog all name the same version.
 
-The workflow never commits or pushes to `main`. If publication fails after the tag push, rerun `publish`: it accepts an existing tag only when that tag resolves to the exact workflow SHA, then resumes release creation. It refuses to overwrite an existing release or move a mismatched tag.
+The workflow never commits or pushes to `main`. If publication fails after the tag push, rerun `publish`: it accepts an existing annotated tag only when that tag resolves to the exact workflow SHA, then resumes release creation. If the release was already published, the rerun succeeds without writing only after the tag target, release tag, title, published state, non-prerelease state, and body all exactly match the requested publication. Any mismatch fails closed.
 
 ## Rollup releases
 

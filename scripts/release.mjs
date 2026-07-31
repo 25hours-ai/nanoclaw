@@ -71,6 +71,60 @@ export function assembleReleaseBody({ changelog, generatedNotes, version }) {
   return `${sections.join('\n\n')}\n`;
 }
 
+function normalizedBody(body) {
+  if (typeof body !== 'string') {
+    throw new Error('GitHub Release body must be a string');
+  }
+  return body.replaceAll('\r\n', '\n').trimEnd();
+}
+
+export function publicationPlan({ expectedBody, release, tagState, targetSha, version }) {
+  const tag = `v${version}`;
+
+  if (!/^[0-9a-f]{40}$/.test(targetSha)) {
+    throw new Error(`target SHA must be a full lowercase 40-character commit SHA: ${targetSha}`);
+  }
+  if (!tagState || typeof tagState.exists !== 'boolean') {
+    throw new Error('tag state must include an exists boolean');
+  }
+
+  if (tagState.exists) {
+    if (tagState.type !== 'tag') {
+      throw new Error(`${tag} exists but is not an annotated tag`);
+    }
+    if (tagState.sha !== targetSha) {
+      throw new Error(`${tag} resolves to ${tagState.sha}, not workflow target ${targetSha}`);
+    }
+  }
+
+  if (release !== null) {
+    if (!tagState.exists) {
+      throw new Error(`GitHub Release ${tag} exists but its tag was not fetched`);
+    }
+    if (release.tag_name !== tag) {
+      throw new Error(`GitHub Release tag ${release.tag_name ?? '<missing>'} does not match ${tag}`);
+    }
+    if (release.name !== tag) {
+      throw new Error(`GitHub Release title ${release.name ?? '<missing>'} does not match ${tag}`);
+    }
+    if (release.draft !== false) {
+      throw new Error(`GitHub Release ${tag} is still a draft`);
+    }
+    if (release.prerelease !== false) {
+      throw new Error(`GitHub Release ${tag} is marked as a prerelease`);
+    }
+    if (normalizedBody(release.body) !== normalizedBody(expectedBody)) {
+      throw new Error(`GitHub Release ${tag} body does not match the assembled release notes`);
+    }
+    if (typeof release.html_url !== 'string' || !release.html_url) {
+      throw new Error(`GitHub Release ${tag} has no public URL`);
+    }
+    return 'already-published';
+  }
+
+  return tagState.exists ? 'create-release' : 'create-tag-and-release';
+}
+
 function repositoryInputs() {
   return {
     changelog: readFileSync('CHANGELOG.md', 'utf8'),
@@ -79,9 +133,9 @@ function repositoryInputs() {
 }
 
 export function main(argv) {
-  const [command, version, generatedNotesPath] = argv;
+  const [command, version, ...args] = argv;
   if (!command || !version) {
-    throw new Error('usage: node scripts/release.mjs <verify|extract|assemble> <x.y.z> [generated-notes.md]');
+    throw new Error('usage: node scripts/release.mjs <verify|extract|assemble|plan> <x.y.z> [command arguments]');
   }
 
   const inputs = repositoryInputs();
@@ -96,6 +150,7 @@ export function main(argv) {
     return;
   }
   if (command === 'assemble') {
+    const [generatedNotesPath] = args;
     if (!generatedNotesPath) {
       throw new Error('assemble requires the path to GitHub-generated notes');
     }
@@ -105,6 +160,22 @@ export function main(argv) {
         generatedNotes: readFileSync(generatedNotesPath, 'utf8'),
         version,
       }),
+    );
+    return;
+  }
+  if (command === 'plan') {
+    const [targetSha, tagStatePath, releasePath, expectedBodyPath] = args;
+    if (!targetSha || !tagStatePath || !releasePath || !expectedBodyPath) {
+      throw new Error('plan requires target SHA, tag-state JSON, release JSON, and expected release notes paths');
+    }
+    process.stdout.write(
+      `${publicationPlan({
+        expectedBody: readFileSync(expectedBodyPath, 'utf8'),
+        release: JSON.parse(readFileSync(releasePath, 'utf8')),
+        tagState: JSON.parse(readFileSync(tagStatePath, 'utf8')),
+        targetSha,
+        version,
+      })}\n`,
     );
     return;
   }
