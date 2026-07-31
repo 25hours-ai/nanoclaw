@@ -1,6 +1,6 @@
 # Releasing NanoClaw
 
-Starting with v2.0.63, the goal is to publish a GitHub Release for every `package.json` version bump that lands on `main`. Releases are cut manually by a maintainer, so there can be lag between a bump merging and its release being published. The intent is *timeliness*, not strict 1:1 correlation with every bump.
+Starting with v2.0.63, the goal is to publish a GitHub Release for every `package.json` version bump that lands on `main`. A maintainer prepares the release in a pull request, then runs the explicit Release workflow after it merges. The intent is _timeliness_, not strict 1:1 correlation with every bump.
 
 Each release ships:
 
@@ -10,7 +10,7 @@ Each release ships:
 
 ## When to cut a release
 
-A release is cut by a maintainer publishing it. The trigger is a `package.json` bump on `main`, but the publish step is manual — there is no fixed schedule, and bumps that land back-to-back may be rolled into a single release (as v2.0.55 through v2.0.63 were). Cutting more frequently is preferable to batching: smaller releases are easier to read, pin, and revert.
+A release is cut by a maintainer publishing it. The trigger is a release PR that bumps `package.json` and adds its `CHANGELOG.md` entry. There is no fixed schedule, and back-to-back changes may be rolled into one release. Cutting at least weekly is preferable to batching: smaller releases are easier to read, pin, and revert.
 
 ## What goes in a release
 
@@ -25,17 +25,22 @@ A release is cut by a maintainer publishing it. The trigger is a `package.json` 
 
 ## Publishing the release
 
-1. Bump `package.json` and add a `CHANGELOG.md` entry in the same commit (commit message: `chore: bump version to vX.Y.Z`).
-2. Once the bump commit lands on `main`, open a draft GitHub Release:
-   - **Tag:** `vX.Y.Z`, target `main`.
-   - **Title:** `vX.Y.Z` (bare version — descriptive content lives in the body, matching the CHANGELOG header pattern).
-   - **Body:** copy the CHANGELOG entry verbatim. Append a `## Contributors` section listing every PR author who landed work in the release window. Append a `**Full Changelog**: https://github.com/nanocoai/nanoclaw/compare/<prev-tag>...vX.Y.Z` line at the bottom.
-3. If anyone in the window opened their first NanoClaw PR, add a `## New Contributors` section above `## Contributors`, with each first-timer's first PR link and an invite to Discord.
-4. Publish (not just save draft).
+1. Open one release PR that:
+   - bumps `package.json` to the exact version being released;
+   - moves the curated user-facing notes from `Unreleased` to `## [X.Y.Z] - <YYYY-MM-DD>` in `CHANGELOG.md`;
+   - keeps every breaking change's migration path inline;
+   - leaves `## [Unreleased]` in place for the next cycle.
+2. Merge the release PR only after normal CI passes.
+3. Copy the full 40-character SHA of the merged release commit. In **Actions → Release**, select `main`, enter that SHA and the exact version without a `v` prefix, choose `verify`, and run the workflow. It checks release metadata, runs the complete host and container CI suite on that exact commit, and makes no repository changes.
+4. Read the verification summary. Confirm the target SHA, previous tag, extracted notes, and absence (or safe recovery state) of the new tag and release.
+5. Run the same workflow again with the same version, the same full SHA, and `publish`. The publish job re-verifies the immutable inputs, creates an annotated `vX.Y.Z` tag on that exact commit, assembles the curated notes plus contributor sections, and publishes the GitHub Release.
+6. Read back the tag target and release body from GitHub. Confirm `package.json`, the tag, the release title, and the changelog all name the same version.
+
+The workflow never commits or pushes to `main`. If publication fails after the tag push, rerun `publish`: it accepts an existing tag only when that tag resolves to the exact workflow SHA, then resumes release creation. It refuses to overwrite an existing release or move a mismatched tag.
 
 ## Rollup releases
 
-If multiple `package.json` bumps land between two GitHub Releases (as happened between v2.0.54 and v2.0.63), the next release is a rollup: its CHANGELOG entry covers everything merged since the last released tag, and the body opens with a one-line "Rollup release covering vX.Y.Z through vX.Y.W." note. After the catchup, return to one release per bump.
+If multiple `package.json` bumps land between two GitHub Releases (as happened between v2.0.54 and v2.0.63), the next release is a rollup: its CHANGELOG entry covers everything merged since the last released tag, and the body opens with a one-line "Rollup release covering vX.Y.Z through vX.Y.W." note. The recovery release receives a fresh version so its package bump and changelog entry can still be reviewed together. After catch-up, return to one release per bump.
 
 ## Channels and stability
 
