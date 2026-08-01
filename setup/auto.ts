@@ -1484,7 +1484,6 @@ async function askDisplayName(fallback: string): Promise<string> {
 }
 
 async function askChannelChoice(): Promise<ChannelChoice> {
-  const isMac = process.platform === 'darwin';
   const choice = ensureAnswer(
     await brightSelect<ChannelChoice>({
       message: 'Want to chat with your assistant from your phone?',
@@ -1499,8 +1498,8 @@ async function askChannelChoice(): Promise<ChannelChoice> {
         },
         {
           value: 'imessage',
-          label: 'Yes, connect iMessage (experimental)',
-          hint: isMac ? 'local macOS mode' : 'remote Photon only',
+          label: 'Yes, connect iMessage',
+          hint: 'local Mac or hosted iMessage (via photon.codes)',
         },
         {
           value: 'slack',

@@ -71,8 +71,8 @@ export const STEP_FILES: Record<string, string[]> = {
   'discord-install': ['.claude/skills/add-discord/SKILL.md', 'scripts/skill-apply.ts', 'setup/channels/discord.ts'],
   'slack-install': ['.claude/skills/add-slack/SKILL.md', 'scripts/skill-apply.ts', 'setup/channels/slack.ts'],
   'slack-validate': ['setup/channels/slack.ts'],
-  'imessage-install': ['.claude/skills/add-imessage/SKILL.md', 'scripts/skill-apply.ts', 'setup/channels/imessage.ts'],
-  'imessage': ['setup/channels/imessage.ts'],
+  'imessage-install': ['.claude/skills/add-imessage/SKILL.md', 'scripts/skill-apply.ts', 'scripts/photon-setup.ts'],
+  'imessage': ['setup/channels/run-channel-skill.ts', 'scripts/photon-setup.ts'],
   'teams-install': ['.claude/skills/add-teams/SKILL.md', 'scripts/skill-apply.ts', 'setup/channels/run-channel-skill.ts'],
   'teams-manifest': ['setup/lib/teams-manifest.ts', 'setup/channels/teams-manifest-build.ts'],
   'init-first-agent': [
