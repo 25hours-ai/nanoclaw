@@ -170,18 +170,7 @@ Rewriting `phoneNumber`/`phoneNumberId` in the auth file makes the no-flag path
 land on the wired line, so an agent that forgets the selector is still correct:
 
 ```nc:run effect:external
-node -e '
-const fs=require("fs"),os=require("os"),path=require("path");
-const p=path.join(process.env.XDG_DATA_HOME||path.join(os.homedir(),".local","share"),"dial","auth.v1.json");
-const a=JSON.parse(fs.readFileSync(p,"utf8"));
-const want=process.argv[1];
-const list=JSON.parse(require("child_process").execFileSync("dial",["number","list","--json"],{encoding:"utf8"}));
-const hit=(list.numbers||[]).find(n=>n.number===want);
-if(!hit){console.error("wired line "+want+" is not on this account");process.exit(1)}
-a.phoneNumber=hit.number;a.phoneNumberId=hit.id;
-fs.writeFileSync(p,JSON.stringify(a,null,2)+"\n",{mode:0o600});
-console.log("default sender pinned to "+hit.number);
-' {{platform_id}}
+f="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"; i=$(dial number list --json | jq -er --arg n '{{platform_id}}' '.numbers[]|select(.number==$n)|.id') && jq --arg n '{{platform_id}}' --arg i "$i" '.phoneNumber=$n|.phoneNumberId=$i' "$f" > "$f.new" && mv -f "$f.new" "$f" && chmod 600 "$f" && echo "default sender pinned to {{platform_id}}"
 ```
 
 ## Choose who may text the line
