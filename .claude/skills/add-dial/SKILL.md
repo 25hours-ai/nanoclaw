@@ -156,7 +156,34 @@ Confirm the account's number — this becomes the agent's public line (its
 dial number list --json | jq -er '.numbers[0].number'
 ```
 ```nc:operator
-Your agent's public Dial line is {{platform_id}} — anyone who texts or calls it reaches the agent.
+Your agent's Dial line is {{platform_id}}.
+```
+
+## Choose who may text the line
+
+A phone number is guessable, and whoever reaches the agent gets a turn with it —
+including its `dial` CLI, which is authenticated for the whole Dial account. An
+admitted stranger can ask the agent to list every SMS and call on the account,
+read call transcripts, or buy another number. Session isolation doesn't prevent
+this: the credential is the exposure, not the conversation.
+
+So decide who gets in. `owner` is the safe default; pick `public` only if you
+want a line strangers can start conversations on (an inbound receptionist, or
+outbound sales where prospects text back):
+
+```nc:prompt inbound_access validate:^(owner|public)$
+Who may text this line — `owner` (only the phone you pair next; everyone else is refused) or `public` (anyone who knows the number reaches the agent)?
+```
+
+```nc:run effect:external
+mkdir -p data/dial && printf '{"inboundAccess":"%s"}\n' "{{inbound_access}}" > data/dial/inbound-policy.json
+```
+
+```nc:operator when:inbound_access=owner
+Locked to you: only the phone you pair in a moment can reach the agent on {{platform_id}}. Anyone else who texts it is refused — including people your agent calls, so they can't reply by text. Re-run this skill to change it.
+```
+```nc:operator when:inbound_access=public
+Open line: anyone who knows {{platform_id}} can text the agent and will get a reply. Each person gets their own conversation, but they all reach an agent holding your Dial account credentials — so don't hand out this number casually. Re-run this skill to lock it to just you.
 ```
 
 ## Restart
@@ -232,12 +259,12 @@ Dial number later, see the `/add-dial-number` skill.
 ## Channel Info
 
 - **type**: `dial`
-- **terminology**: Dial calls it a "number" or "line." One number is a single public, threaded line — each texter/caller gets their own thread.
+- **terminology**: Dial calls it a "number" or "line." One number is a single threaded line — each texter/caller gets their own thread.
 - **platform-id-format**: the bare E.164 number (e.g. `+14155550123`) — unlike prefixed channels, the number itself is the id.
 - **how-to-find-id**: Do NOT ask the user for an id. Dial registration uses pairing — run `pnpm exec tsx setup/index.ts --step pair-dial -- --line <E.164>`. The step prints a 4-digit code + QR; tell the user to text just those 4 digits to the Dial line. Success emits a `PAIR_DIAL` block with `STATUS=success`, `PLATFORM_ID` (the bare line), and `PAIRED_NUMBER` (the bare sender E.164). The service must be running — the adapter is what observes the code.
-- **supports-threads**: yes (each correspondent is a thread on the one public line)
+- **supports-threads**: yes (each correspondent is a thread on the line, with its own session)
 - **typical-use**: A real phone number for SMS and AI-handled voice calls — receptionist, notifications, 2FA relay.
-- **default-isolation**: One public line → one agent group; anyone who texts/calls it reaches that agent.
+- **default-isolation**: One line → one agent group. Who may reach it is the operator's choice at setup (`inbound_access`): `owner` admits only the paired phone, `public` admits everyone. Defaults to owner-only.
 
 ## Troubleshooting
 
