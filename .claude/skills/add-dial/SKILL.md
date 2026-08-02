@@ -156,7 +156,48 @@ Confirm the account's number — this becomes the agent's public line (its
 dial number list --json | jq -er '.numbers[0].number'
 ```
 ```nc:operator
-Your agent's public Dial line is {{platform_id}} — anyone who texts or calls it reaches the agent.
+Your agent's Dial line is {{platform_id}}.
+```
+
+Make that line the CLI's default sender. `dial onboard` saves whichever number
+the account considers primary — the **oldest** one — while the line picked above
+is the **newest** (`numbers[0]`). On a single-number account those coincide, so
+nothing looks wrong; with two or more they diverge permanently, and every
+`dial call` / `dial message` that omits `--from-number` goes out from a number
+this install isn't listening on. Replies to it are dropped as `no_agent_wired`.
+
+Rewriting `phoneNumber`/`phoneNumberId` in the auth file makes the no-flag path
+land on the wired line, so an agent that forgets the selector is still correct:
+
+```nc:run effect:external
+f="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"; i=$(dial number list --json | jq -er --arg n '{{platform_id}}' '.numbers[]|select(.number==$n)|.id') && jq --arg n '{{platform_id}}' --arg i "$i" '.phoneNumber=$n|.phoneNumberId=$i' "$f" > "$f.new" && mv -f "$f.new" "$f" && chmod 600 "$f" && echo "default sender pinned to {{platform_id}}"
+```
+
+## Choose who may text the line
+
+A phone number is guessable, and whoever reaches the agent gets a turn with it —
+including its `dial` CLI, which is authenticated for the whole Dial account. An
+admitted stranger can ask the agent to list every SMS and call on the account,
+read call transcripts, or buy another number. Session isolation doesn't prevent
+this: the credential is the exposure, not the conversation.
+
+So decide who gets in. `owner` is the safe default; pick `public` only if you
+want a line strangers can start conversations on (an inbound receptionist, or
+outbound sales where prospects text back):
+
+```nc:prompt inbound_access validate:^(owner|public)$
+Who may text this line — `owner` (only the phone you pair next; everyone else is refused) or `public` (anyone who knows the number reaches the agent)?
+```
+
+```nc:run effect:external
+mkdir -p data/dial && printf '{"inboundAccess":"%s"}\n' "{{inbound_access}}" > data/dial/inbound-policy.json
+```
+
+```nc:operator when:inbound_access=owner
+Locked to you: only the phone you pair in a moment can reach the agent on {{platform_id}}. Anyone else who texts it is refused — including people your agent calls, so they can't reply by text. Re-run this skill to change it.
+```
+```nc:operator when:inbound_access=public
+Open line: anyone who knows {{platform_id}} can text the agent and will get a reply. Each person gets their own conversation, but they all reach an agent holding your Dial account credentials — so don't hand out this number casually. Re-run this skill to lock it to just you.
 ```
 
 ## Restart
@@ -223,6 +264,16 @@ set up yet):
 bash .claude/skills/add-dial-tool/add.sh || true
 ```
 
+Then tell the sandboxed agent which line is its own. The container authenticates
+through the OneCLI proxy and has **no** auth file, so `defaultNumberId` is null
+in there — an agent that omits `--from-number` gets an error, and one that picks
+from `dial number list` gets whichever number sorts first, which is unrelated to
+what's wired. Only this skill knows the answer, so it has to write it down:
+
+```nc:run effect:external when:install_tool=yes
+printf '\n## This install'"'"'s line\n\nAlways pass `--from-number {{platform_id}}` on every `dial call` and `dial message`. That is the line this NanoClaw install is wired to; any other number on the account reaches nobody and replies to it are dropped.\n' >> container/skills/dial-cli/SKILL.md && for s in data/v2-sessions/*/*/; do [ -d "$s/.claude-shared/skills" ] && cp container/skills/dial-cli/SKILL.md "$s/.claude-shared/skills/dial-cli/SKILL.md" 2>/dev/null; done; echo "wired line recorded for the sandbox: {{platform_id}}"
+```
+
 ## Next Steps
 
 If you're in the middle of `/setup`, return to the setup flow now. Otherwise wire
@@ -232,12 +283,12 @@ Dial number later, see the `/add-dial-number` skill.
 ## Channel Info
 
 - **type**: `dial`
-- **terminology**: Dial calls it a "number" or "line." One number is a single public, threaded line — each texter/caller gets their own thread.
+- **terminology**: Dial calls it a "number" or "line." One number is a single threaded line — each texter/caller gets their own thread.
 - **platform-id-format**: the bare E.164 number (e.g. `+14155550123`) — unlike prefixed channels, the number itself is the id.
 - **how-to-find-id**: Do NOT ask the user for an id. Dial registration uses pairing — run `pnpm exec tsx setup/index.ts --step pair-dial -- --line <E.164>`. The step prints a 4-digit code + QR; tell the user to text just those 4 digits to the Dial line. Success emits a `PAIR_DIAL` block with `STATUS=success`, `PLATFORM_ID` (the bare line), and `PAIRED_NUMBER` (the bare sender E.164). The service must be running — the adapter is what observes the code.
-- **supports-threads**: yes (each correspondent is a thread on the one public line)
+- **supports-threads**: yes (each correspondent is a thread on the line, with its own session)
 - **typical-use**: A real phone number for SMS and AI-handled voice calls — receptionist, notifications, 2FA relay.
-- **default-isolation**: One public line → one agent group; anyone who texts/calls it reaches that agent.
+- **default-isolation**: One line → one agent group. Who may reach it is the operator's choice at setup (`inbound_access`): `owner` admits only the paired phone, `public` admits everyone. Defaults to owner-only.
 
 ## Troubleshooting
 

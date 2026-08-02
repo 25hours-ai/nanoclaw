@@ -6,6 +6,7 @@
       "inputs": {
         "owner_email": "operator@example.com",
         "otp": "123456",
+        "inbound_access": "owner",
         "install_tool": "no"
       },
       "exec": [
@@ -19,6 +20,7 @@
       "name": "reuse-signed-in",
       "inputs": {
         "reuse_choice": "reuse",
+        "inbound_access": "public",
         "install_tool": "yes"
       },
       "exec": [
@@ -34,6 +36,7 @@
         "reuse_choice": "switch",
         "owner_email": "other@example.com",
         "otp": "654321",
+        "inbound_access": "owner",
         "install_tool": "no"
       },
       "exec": [
