@@ -159,6 +159,31 @@ dial number list --json | jq -er '.numbers[0].number'
 Your agent's Dial line is {{platform_id}}.
 ```
 
+Make that line the CLI's default sender. `dial onboard` saves whichever number
+the account considers primary — the **oldest** one — while the line picked above
+is the **newest** (`numbers[0]`). On a single-number account those coincide, so
+nothing looks wrong; with two or more they diverge permanently, and every
+`dial call` / `dial message` that omits `--from-number` goes out from a number
+this install isn't listening on. Replies to it are dropped as `no_agent_wired`.
+
+Rewriting `phoneNumber`/`phoneNumberId` in the auth file makes the no-flag path
+land on the wired line, so an agent that forgets the selector is still correct:
+
+```nc:run effect:external
+node -e '
+const fs=require("fs"),os=require("os"),path=require("path");
+const p=path.join(process.env.XDG_DATA_HOME||path.join(os.homedir(),".local","share"),"dial","auth.v1.json");
+const a=JSON.parse(fs.readFileSync(p,"utf8"));
+const want=process.argv[1];
+const list=JSON.parse(require("child_process").execFileSync("dial",["number","list","--json"],{encoding:"utf8"}));
+const hit=(list.numbers||[]).find(n=>n.number===want);
+if(!hit){console.error("wired line "+want+" is not on this account");process.exit(1)}
+a.phoneNumber=hit.number;a.phoneNumberId=hit.id;
+fs.writeFileSync(p,JSON.stringify(a,null,2)+"\n",{mode:0o600});
+console.log("default sender pinned to "+hit.number);
+' {{platform_id}}
+```
+
 ## Choose who may text the line
 
 A phone number is guessable, and whoever reaches the agent gets a turn with it —
