@@ -28,6 +28,7 @@ const approvalState = vi.hoisted(() => ({
     },
   ),
   observedContexts: [] as CallerContext[],
+  wiringUpdates: [] as Record<string, unknown>[],
 }));
 
 vi.mock('../log.js', () => ({
@@ -50,6 +51,11 @@ const mockGetPendingApproval = vi.fn();
 vi.mock('../db/sessions.js', () => ({
   getSession: (...args: unknown[]) => mockGetSession(...args),
   getPendingApproval: (...args: unknown[]) => mockGetPendingApproval(...args),
+}));
+
+const mockGetMessagingGroupAgent = vi.fn();
+vi.mock('../db/messaging-groups.js', () => ({
+  getMessagingGroupAgent: (...args: unknown[]) => mockGetMessagingGroupAgent(...args),
 }));
 
 // dispatch's post-handler looks up the resource's `scopeField` via getResource.
@@ -131,12 +137,49 @@ register({
 
 register({
   name: 'wirings-list',
-  description: 'test command (wirings resource — not allowed)',
+  description: 'test command (wirings resource)',
   resource: 'wirings',
   access: 'open',
+  generic: 'list',
   parseArgs: (raw) => raw,
-  handler: async (args) => ({ echo: args }),
+  handler: async (args) => [
+    { id: 'w-owned', agent_group_id: (args as Record<string, unknown>).agent_group_id },
+    { id: 'w-foreign', agent_group_id: 'g2' },
+  ],
 });
+
+register({
+  name: 'wirings-get',
+  description: 'test command (wirings get)',
+  resource: 'wirings',
+  access: 'open',
+  generic: 'get',
+  parseArgs: (raw) => raw,
+  handler: async (args) => mockGetMessagingGroupAgent((args as Record<string, unknown>).id),
+});
+
+register({
+  name: 'wirings-update',
+  description: 'test command (wirings update)',
+  resource: 'wirings',
+  access: 'approval',
+  parseArgs: (raw) => raw,
+  handler: async (args) => {
+    approvalState.wiringUpdates.push(args as Record<string, unknown>);
+    return args;
+  },
+});
+
+for (const verb of ['create', 'delete']) {
+  register({
+    name: `wirings-${verb}`,
+    description: `test command (wirings ${verb})`,
+    resource: 'wirings',
+    access: 'approval',
+    parseArgs: (raw) => raw,
+    handler: async (args) => args,
+  });
+}
 
 register({
   name: 'host-only-cmd',
@@ -236,13 +279,20 @@ import type { CallerContext } from './frame.js';
 beforeEach(() => {
   vi.clearAllMocks();
   approvalState.observedContexts.length = 0;
-  // Default: the four CLI-whitelisted resources with their real scopeFields.
+  approvalState.wiringUpdates.length = 0;
+  mockGetMessagingGroupAgent.mockImplementation((id: string) => {
+    if (id === 'w-owned') return { id, agent_group_id: 'g1', engage_mode: 'mention' };
+    if (id === 'w-foreign') return { id, agent_group_id: 'g2', engage_mode: 'mention' };
+    return undefined;
+  });
+  // Default: CLI-whitelisted resources with their real scopeFields.
   const scopeFields: Record<string, string> = {
     groups: 'id',
     sessions: 'agent_group_id',
     destinations: 'agent_group_id',
     members: 'agent_group_id',
     tasks: 'agent_group_id',
+    wirings: 'agent_group_id',
   };
   mockGetResource.mockImplementation((plural: string) =>
     scopeFields[plural] ? { scopeField: scopeFields[plural] } : undefined,
@@ -420,16 +470,78 @@ describe('CLI scope enforcement', () => {
     }
   });
 
-  it('group: blocks non-whitelisted resources (wirings)', async () => {
+  it('group: scopes wiring reads to owned rows without exposing foreign ids', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
 
-    const resp = await dispatch({ id: '1', command: 'wirings-list', args: {} }, agentCtx());
+    const list = await dispatch({ id: '1', command: 'wirings-list', args: {} }, agentCtx());
+    const owned = await dispatch({ id: '2', command: 'wirings-get', args: { id: 'w-owned' } }, agentCtx());
+    const missing = await dispatch({ id: '3', command: 'wirings-get', args: { id: 'w-missing' } }, agentCtx());
+    const foreign = await dispatch({ id: '4', command: 'wirings-get', args: { id: 'w-foreign' } }, agentCtx());
+
+    expect(list.ok).toBe(true);
+    if (list.ok) expect(list.data).toEqual([{ id: 'w-owned', agent_group_id: 'g1' }]);
+    expect(owned.ok).toBe(true);
+    expect(missing.ok).toBe(false);
+    expect(foreign.ok).toBe(false);
+    if (!missing.ok && !foreign.ok) {
+      expect(missing.error.code).toBe('forbidden');
+      expect(foreign.error).toEqual(missing.error);
+    }
+  });
+
+  it.each([
+    ['wirings-update', { id: 'w-owned', sender_scope: 'known' }],
+    ['wirings-update', { id: 'w-owned', ignored_message_policy: 'accumulate' }],
+    ['wirings-create', { messaging_group_id: 'mg1' }],
+    ['wirings-delete', { id: 'w-owned' }],
+    ['wirings-list', { agent_group: 'other-folder' }],
+    ['wirings-list', { 'agent-group-id': 'g2' }],
+  ])('group: denies %s with out-of-scope args', async (command, args) => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+
+    const resp = await dispatch({ id: '1', command, args }, agentCtx());
 
     expect(resp.ok).toBe(false);
-    if (!resp.ok) {
-      expect(resp.error.code).toBe('forbidden');
-      expect(resp.error.message).toContain('wirings');
+    if (!resp.ok) expect(resp.error.code).toBe('forbidden');
+    expect(approvalState.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it.each(['owned', 'foreign'])('group: rechecks %s wiring ownership on approved replay', async (state) => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });
+    mockGetAgentGroup.mockReturnValue({ id: 'g1', name: 'Group One' });
+
+    const resp = await dispatch(
+      {
+        id: '1',
+        command: 'wirings-update',
+        args: { id: 'w-owned', engage_mode: 'pattern', engage_pattern: '.' },
+      },
+      agentCtx(),
+    );
+    expect(resp.ok).toBe(false);
+    if (!resp.ok) expect(resp.error.code).toBe('approval-pending');
+
+    const request = approvalState.requestApproval.mock.calls[0][0] as { payload: Record<string, unknown> };
+    const grant = { approval_id: `appr-${state}`, action: 'cli_command', payload: JSON.stringify(request.payload) };
+    mockGetPendingApproval.mockReturnValue(grant);
+    if (state === 'foreign') {
+      mockGetMessagingGroupAgent.mockReturnValue({ id: 'w-owned', agent_group_id: 'g2' });
     }
+    const notify = vi.fn();
+
+    await approvalState.approvalHandler!({
+      session: { id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' },
+      payload: request.payload,
+      approval: grant,
+      userId: 'telegram:admin',
+      notify,
+    });
+
+    expect(approvalState.wiringUpdates).toHaveLength(state === 'owned' ? 1 : 0);
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining(state === 'owned' ? 'approved and executed' : 'failed'),
+    );
   });
 
   it('group: rejects cross-group --agent_group_id', async () => {
@@ -883,13 +995,14 @@ describe('--help interception', () => {
     }
   });
 
-  it('still enforces group scope before answering --help', async () => {
+  it.each(['wirings-list', 'wirings-get', 'wirings-update'])('answers %s --help in group scope', async (command) => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    mockGetResource.mockReturnValue(undefined);
 
-    const resp = await dispatch({ id: '1', command: 'wirings-list', args: { help: true } }, agentCtx());
+    const resp = await dispatch({ id: '1', command, args: { help: true } }, agentCtx());
 
-    expect(resp.ok).toBe(false);
-    if (!resp.ok) expect(resp.error.code).toBe('forbidden');
+    expect(resp.ok).toBe(true);
+    expect(approvalState.requestApproval).not.toHaveBeenCalled();
   });
 });
 

@@ -71,7 +71,8 @@ export interface ResourceDef {
   /**
    * Column that carries the agent group ID for group-scope enforcement.
    * Required on every resource in the CLI whitelist (groups, sessions,
-   * destinations, members). When absent, post-handler filtering fails closed.
+   * destinations, members, tasks, wirings). When absent, post-handler
+   * filtering fails closed.
    */
   scopeField?: string;
   columns: ColumnDef[];

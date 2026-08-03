@@ -17,7 +17,7 @@ import type { CallerContext } from './frame.js';
  * consumed by both dispatch enforcement and `ncl help` filtering, so the
  * agent is never shown a resource the gate would reject (or vice versa).
  */
-export const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks']);
+export const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks', 'wirings']);
 
 export type Access = 'open' | 'approval' | 'hidden';
 
@@ -42,9 +42,10 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
   /**
    * The group-scope whitelist key. Under `cli_scope: 'group'` the dispatcher
    * only lets an agent run commands whose `resource` is on the whitelist
-   * (`groups`, `sessions`, `destinations`, `members`); it also drives help
-   * grouping. Omitting `resource` exempts the command from the whitelist —
-   * that's how general commands like `help` stay reachable in group scope.
+   * (`groups`, `sessions`, `destinations`, `members`, `tasks`, `wirings`); it
+   * also drives help grouping. Omitting `resource` exempts the command from
+   * the whitelist — that's how general commands like `help` stay reachable
+   * in group scope.
    */
   resource?: string;
   /**

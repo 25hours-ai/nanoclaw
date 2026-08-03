@@ -220,7 +220,13 @@ describe('origin metadata (from= attribute)', () => {
       .run(name, name, channelType, platformId);
   }
 
-  function insertWithRouting(id: string, kind: string, content: object, channelType: string | null, platformId: string | null): void {
+  function insertWithRouting(
+    id: string,
+    kind: string,
+    content: object,
+    channelType: string | null,
+    platformId: string | null,
+  ): void {
     getInboundDb()
       .prepare(
         `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, content)
@@ -411,6 +417,47 @@ const ERR_ROUTING = {
   inReplyTo: 'm1',
 };
 
+it('holds accumulated follow-ups until a wake-eligible message arrives', async () => {
+  const pushes: string[] = [];
+  let pushesBeforeTrigger = -1;
+  let pendingBeforeTrigger: string[] = [];
+
+  async function* events(): AsyncGenerator<ProviderEvent> {
+    yield { type: 'init', continuation: 'sess-1' };
+    insertMessage('m1', 'chat', { sender: 'A', text: 'earlier context' }, { trigger: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    pushesBeforeTrigger = pushes.length;
+    pendingBeforeTrigger = getPendingMessages().map((m) => m.id);
+
+    insertMessage('m2', 'chat', { sender: 'B', text: 'real trigger' }, { trigger: 1 });
+    const deadline = Date.now() + 5000;
+    while (pushes.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  await processQuery(
+    {
+      push: (message) => pushes.push(message),
+      end: () => {},
+      events: events(),
+      abort: () => {},
+    },
+    ERR_ROUTING,
+    [],
+    'claude',
+    undefined,
+    'prompt',
+    undefined,
+  );
+
+  expect(pushesBeforeTrigger).toBe(0);
+  expect(pendingBeforeTrigger).toEqual(['m1']);
+  expect(pushes).toHaveLength(1);
+  expect(pushes[0]).toContain('earlier context');
+  expect(pushes[0]).toContain('real trigger');
+});
+
 describe('error result with no <message> envelope', () => {
   it('delivers a budget/billing error to the triggering channel and does not nudge', async () => {
     const budgetText = 'Spending limit reached. Add your own key at https://example.com/keys';
@@ -470,9 +517,9 @@ const TASK_ROUTING = {
 
 function taskLogRows(): Array<{ text: string }> {
   return (
-    getOutboundDb()
-      .prepare("SELECT content FROM messages_out WHERE kind = 'task_log' ORDER BY seq")
-      .all() as Array<{ content: string }>
+    getOutboundDb().prepare("SELECT content FROM messages_out WHERE kind = 'task_log' ORDER BY seq").all() as Array<{
+      content: string;
+    }>
   ).map((r) => JSON.parse(r.content) as { text: string });
 }
 
