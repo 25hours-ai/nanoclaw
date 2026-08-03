@@ -53,9 +53,9 @@ vi.mock('../db/sessions.js', () => ({
   getPendingApproval: (...args: unknown[]) => mockGetPendingApproval(...args),
 }));
 
-const mockGetMessagingGroupAgent = vi.fn();
+const mockGetMessagingGroupAgentByPair = vi.fn();
 vi.mock('../db/messaging-groups.js', () => ({
-  getMessagingGroupAgent: (...args: unknown[]) => mockGetMessagingGroupAgent(...args),
+  getMessagingGroupAgentByPair: (...args: unknown[]) => mockGetMessagingGroupAgentByPair(...args),
 }));
 
 // dispatch's post-handler looks up the resource's `scopeField` via getResource.
@@ -137,15 +137,11 @@ register({
 
 register({
   name: 'wirings-list',
-  description: 'test command (wirings resource)',
+  description: 'test command (wirings resource — not allowed)',
   resource: 'wirings',
   access: 'open',
-  generic: 'list',
   parseArgs: (raw) => raw,
-  handler: async (args) => [
-    { id: 'w-owned', agent_group_id: (args as Record<string, unknown>).agent_group_id },
-    { id: 'w-foreign', agent_group_id: 'g2' },
-  ],
+  handler: async (args) => ({ echo: args }),
 });
 
 register({
@@ -155,7 +151,7 @@ register({
   access: 'open',
   generic: 'get',
   parseArgs: (raw) => raw,
-  handler: async (args) => mockGetMessagingGroupAgent((args as Record<string, unknown>).id),
+  handler: async (args) => ({ id: (args as Record<string, unknown>).id, agent_group_id: 'g1' }),
 });
 
 register({
@@ -169,17 +165,6 @@ register({
     return args;
   },
 });
-
-for (const verb of ['create', 'delete']) {
-  register({
-    name: `wirings-${verb}`,
-    description: `test command (wirings ${verb})`,
-    resource: 'wirings',
-    access: 'approval',
-    parseArgs: (raw) => raw,
-    handler: async (args) => args,
-  });
-}
 
 register({
   name: 'host-only-cmd',
@@ -280,11 +265,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   approvalState.observedContexts.length = 0;
   approvalState.wiringUpdates.length = 0;
-  mockGetMessagingGroupAgent.mockImplementation((id: string) => {
-    if (id === 'w-owned') return { id, agent_group_id: 'g1', engage_mode: 'mention' };
-    if (id === 'w-foreign') return { id, agent_group_id: 'g2', engage_mode: 'mention' };
-    return undefined;
-  });
+  mockGetMessagingGroupAgentByPair.mockReturnValue({ id: 'w-current', agent_group_id: 'g1' });
   // Default: CLI-whitelisted resources with their real scopeFields.
   const scopeFields: Record<string, string> = {
     groups: 'id',
@@ -470,32 +451,20 @@ describe('CLI scope enforcement', () => {
     }
   });
 
-  it('group: scopes wiring reads to owned rows without exposing foreign ids', async () => {
+  it('group: resolves wiring reads from the current conversation, ignoring caller ids', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
 
-    const list = await dispatch({ id: '1', command: 'wirings-list', args: {} }, agentCtx());
-    const owned = await dispatch({ id: '2', command: 'wirings-get', args: { id: 'w-owned' } }, agentCtx());
-    const missing = await dispatch({ id: '3', command: 'wirings-get', args: { id: 'w-missing' } }, agentCtx());
-    const foreign = await dispatch({ id: '4', command: 'wirings-get', args: { id: 'w-foreign' } }, agentCtx());
+    const resp = await dispatch({ id: '1', command: 'wirings-get', args: { id: 'w-foreign' } }, agentCtx());
 
-    expect(list.ok).toBe(true);
-    if (list.ok) expect(list.data).toEqual([{ id: 'w-owned', agent_group_id: 'g1' }]);
-    expect(owned.ok).toBe(true);
-    expect(missing.ok).toBe(false);
-    expect(foreign.ok).toBe(false);
-    if (!missing.ok && !foreign.ok) {
-      expect(missing.error.code).toBe('forbidden');
-      expect(foreign.error).toEqual(missing.error);
-    }
+    expect(resp.ok).toBe(true);
+    if (resp.ok) expect(resp.data).toMatchObject({ id: 'w-current', agent_group_id: 'g1' });
+    expect(mockGetMessagingGroupAgentByPair).toHaveBeenCalledWith('mg1', 'g1');
   });
 
   it.each([
-    ['wirings-update', { id: 'w-owned', sender_scope: 'known' }],
-    ['wirings-update', { id: 'w-owned', ignored_message_policy: 'accumulate' }],
-    ['wirings-create', { messaging_group_id: 'mg1' }],
-    ['wirings-delete', { id: 'w-owned' }],
-    ['wirings-list', { agent_group: 'other-folder' }],
-    ['wirings-list', { 'agent-group-id': 'g2' }],
+    ['wirings-update', { sender_scope: 'known' }],
+    ['wirings-update', { ignored_message_policy: 'accumulate' }],
+    ['wirings-list', {}],
   ])('group: denies %s with out-of-scope args', async (command, args) => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
 
@@ -506,7 +475,7 @@ describe('CLI scope enforcement', () => {
     expect(approvalState.requestApproval).not.toHaveBeenCalled();
   });
 
-  it.each(['owned', 'foreign'])('group: rechecks %s wiring ownership on approved replay', async (state) => {
+  it.each(['current', 'missing'])('group: re-resolves a %s conversation wiring on approved replay', async (state) => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
     mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });
     mockGetAgentGroup.mockReturnValue({ id: 'g1', name: 'Group One' });
@@ -515,7 +484,7 @@ describe('CLI scope enforcement', () => {
       {
         id: '1',
         command: 'wirings-update',
-        args: { id: 'w-owned', engage_mode: 'pattern', engage_pattern: '.' },
+        args: { engage_mode: 'pattern', engage_pattern: '.' },
       },
       agentCtx(),
     );
@@ -525,9 +494,7 @@ describe('CLI scope enforcement', () => {
     const request = approvalState.requestApproval.mock.calls[0][0] as { payload: Record<string, unknown> };
     const grant = { approval_id: `appr-${state}`, action: 'cli_command', payload: JSON.stringify(request.payload) };
     mockGetPendingApproval.mockReturnValue(grant);
-    if (state === 'foreign') {
-      mockGetMessagingGroupAgent.mockReturnValue({ id: 'w-owned', agent_group_id: 'g2' });
-    }
+    if (state === 'missing') mockGetMessagingGroupAgentByPair.mockReturnValue(undefined);
     const notify = vi.fn();
 
     await approvalState.approvalHandler!({
@@ -538,9 +505,9 @@ describe('CLI scope enforcement', () => {
       notify,
     });
 
-    expect(approvalState.wiringUpdates).toHaveLength(state === 'owned' ? 1 : 0);
+    expect(approvalState.wiringUpdates).toHaveLength(state === 'current' ? 1 : 0);
     expect(notify).toHaveBeenCalledWith(
-      expect.stringContaining(state === 'owned' ? 'approved and executed' : 'failed'),
+      expect.stringContaining(state === 'current' ? 'approved and executed' : 'failed'),
     );
   });
 
@@ -995,7 +962,7 @@ describe('--help interception', () => {
     }
   });
 
-  it.each(['wirings-list', 'wirings-get', 'wirings-update'])('answers %s --help in group scope', async (command) => {
+  it.each(['wirings-get', 'wirings-update'])('answers %s --help in group scope', async (command) => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
     mockGetResource.mockReturnValue(undefined);
 

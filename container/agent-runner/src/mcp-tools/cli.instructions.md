@@ -25,11 +25,11 @@ Run `ncl help` for the full list. Common resources:
 | destinations | list, add, remove                                                                                                                         | Where an agent group can send messages                  |
 | members      | list, add, remove                                                                                                                         | Unprivileged access gate for an agent group             |
 | tasks        | list, get, create, update, cancel, pause, resume, delete, append-log                                                                      | Scheduled tasks for your agent group                    |
-| wirings      | list, get, update                                                                                                                         | Response policy for this agent's chats                  |
+| wirings      | get, update                                                                                                                               | Response policy for the current chat                    |
 
 Additional resources (available under `global` scope only): messaging-groups, users, roles, user-dms, dropped-messages, approvals.
 
-Under `group` scope, wiring reads are limited to this agent and updates may only change `engage_mode` and `engage_pattern`. Updates require human approval.
+Under `group` scope, `wirings get/update` always targets the current chat. Updates may only change `engage_mode` and `engage_pattern` and require human approval.
 
 ### When to use
 
@@ -38,7 +38,7 @@ Under `group` scope, wiring reads are limited to this agent and updates may only
 - **Checking who's in your group** — `ncl members list`.
 - **Seeing your destinations** — `ncl destinations list`.
 - **Scheduling work** — `ncl tasks create`, then `ncl tasks list/get/update/cancel/pause/resume/delete`; `ncl tasks run <id>` fires one extra run now (testing) without changing the schedule. Each task run auto-logs its final text to the run log; `ncl tasks append-log --msg "…"` is for extra mid-run notes (host-timestamped, not a message).
-- **Explaining or changing response behavior** — inspect `ncl wirings list`, then request an update to the relevant wiring.
+- **Explaining or changing response behavior** — inspect `ncl wirings get`, then request an update.
 - **Answering questions about the system** — query `ncl` rather than guessing.
 
 ### Access rules
@@ -68,7 +68,7 @@ ncl sessions list
 ncl destinations list
 ncl members list
 ncl tasks list
-ncl wirings list
+ncl wirings get
 # Always pass a short descriptive --name so the task id is readable (e.g. daily-briefing-a25c, not a long uuid).
 # For a recurring task, --recurrence alone sets the schedule (first run derived from it); add --process-after only for one-shots.
 ncl tasks create --name "daily briefing" --prompt "Send the daily briefing" --recurrence "0 9 * * *"
@@ -83,7 +83,7 @@ ncl groups config update --model claude-sonnet-4-5-20250514
 ncl groups config add-mcp-server --name rss --command npx --args '["some-rss-mcp"]'
 ncl groups config add-package --npm some-package
 ncl members add --user telegram:jane
-ncl wirings update <wiring-id> --engage-mode pattern --engage-pattern "."
+ncl wirings update --engage-mode pattern --engage-pattern "."
 ```
 
 ### Important

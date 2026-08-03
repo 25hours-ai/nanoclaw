@@ -220,13 +220,7 @@ describe('origin metadata (from= attribute)', () => {
       .run(name, name, channelType, platformId);
   }
 
-  function insertWithRouting(
-    id: string,
-    kind: string,
-    content: object,
-    channelType: string | null,
-    platformId: string | null,
-  ): void {
+  function insertWithRouting(id: string, kind: string, content: object, channelType: string | null, platformId: string | null): void {
     getInboundDb()
       .prepare(
         `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, content)
@@ -417,23 +411,13 @@ const ERR_ROUTING = {
   inReplyTo: 'm1',
 };
 
-it('holds accumulated follow-ups until a wake-eligible message arrives', async () => {
+it('does not push accumulated-only follow-ups into an active query', async () => {
   const pushes: string[] = [];
-  let pushesBeforeTrigger = -1;
-  let pendingBeforeTrigger: string[] = [];
 
   async function* events(): AsyncGenerator<ProviderEvent> {
     yield { type: 'init', continuation: 'sess-1' };
-    insertMessage('m1', 'chat', { sender: 'A', text: 'earlier context' }, { trigger: 0 });
+    insertMessage('m1', 'chat', { sender: 'A', text: 'context only' }, { trigger: 0 });
     await new Promise((resolve) => setTimeout(resolve, 750));
-    pushesBeforeTrigger = pushes.length;
-    pendingBeforeTrigger = getPendingMessages().map((m) => m.id);
-
-    insertMessage('m2', 'chat', { sender: 'B', text: 'real trigger' }, { trigger: 1 });
-    const deadline = Date.now() + 5000;
-    while (pushes.length === 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
   }
 
   await processQuery(
@@ -451,11 +435,8 @@ it('holds accumulated follow-ups until a wake-eligible message arrives', async (
     undefined,
   );
 
-  expect(pushesBeforeTrigger).toBe(0);
-  expect(pendingBeforeTrigger).toEqual(['m1']);
-  expect(pushes).toHaveLength(1);
-  expect(pushes[0]).toContain('earlier context');
-  expect(pushes[0]).toContain('real trigger');
+  expect(pushes).toHaveLength(0);
+  expect(getPendingMessages().map((m) => m.id)).toEqual(['m1']);
 });
 
 describe('error result with no <message> envelope', () => {
@@ -517,9 +498,9 @@ const TASK_ROUTING = {
 
 function taskLogRows(): Array<{ text: string }> {
   return (
-    getOutboundDb().prepare("SELECT content FROM messages_out WHERE kind = 'task_log' ORDER BY seq").all() as Array<{
-      content: string;
-    }>
+    getOutboundDb()
+      .prepare("SELECT content FROM messages_out WHERE kind = 'task_log' ORDER BY seq")
+      .all() as Array<{ content: string }>
   ).map((r) => JSON.parse(r.content) as { text: string });
 }
 
