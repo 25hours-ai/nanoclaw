@@ -12,25 +12,50 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 
 import { DATA_DIR } from './config.js';
 import { log } from './log.js';
 
 export interface UpgradeState {
   version: string;
+  commit: string;
+  tree: string;
   updatedAt: string;
   via: string;
+}
+
+export interface CodeIdentity {
+  version: string;
+  commit: string;
+  tree: string;
 }
 
 const MARKER_PATH = path.join(DATA_DIR, 'upgrade-state.json');
 const FIX_COMMAND = 'pnpm exec tsx scripts/upgrade-state.ts set';
 
 /** Version the running code declares, read from package.json. */
-export function getCodeVersion(): string {
-  const pkgPath = path.join(process.cwd(), 'package.json');
+export function getCodeVersion(projectRoot: string = process.cwd()): string {
+  const pkgPath = path.join(projectRoot, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string };
   if (!pkg.version) throw new Error(`No version field in ${pkgPath}`);
   return pkg.version;
+}
+
+/** Git identity of the exact checkout the host is about to run. */
+export function getCodeIdentity(projectRoot: string = process.cwd()): CodeIdentity {
+  const git = (rev: string): string =>
+    execFileSync('git', ['rev-parse', '--verify', rev], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+
+  return {
+    version: getCodeVersion(projectRoot),
+    commit: git('HEAD'),
+    tree: git('HEAD^{tree}'),
+  };
 }
 
 /**
@@ -59,9 +84,11 @@ export function readUpgradeState(): UpgradeState | null {
  * Stamp the marker. Only the sanctioned paths (setup / update / migrate)
  * call this on success; `version` defaults to the current code version.
  */
-export function writeUpgradeState(opts: { version?: string; via: string }): UpgradeState {
+export function writeUpgradeState(opts: { version?: string; via: string; projectRoot?: string }): UpgradeState {
+  const identity = getCodeIdentity(opts.projectRoot);
   const state: UpgradeState = {
-    version: opts.version ?? getCodeVersion(),
+    ...identity,
+    version: opts.version ?? identity.version,
     updatedAt: new Date().toISOString(),
     via: opts.via,
   };
@@ -70,10 +97,19 @@ export function writeUpgradeState(opts: { version?: string; via: string }): Upgr
   return state;
 }
 
-/** True when the marker exists and matches the running code version. */
-export function isUpgradeCurrent(): boolean {
+/** True when the marker exists and matches the exact running checkout. */
+export function isUpgradeCurrent(projectRoot: string = process.cwd()): boolean {
   const state = readUpgradeState();
-  return state !== null && state.version === getCodeVersion();
+  if (state === null) return false;
+  try {
+    const code = getCodeIdentity(projectRoot);
+    return state.version === code.version && state.commit === code.commit && state.tree === code.tree;
+  } catch (err) {
+    log.warn('Could not resolve running code identity; upgrade marker fails closed', {
+      err: String(err),
+    });
+    return false;
+  }
 }
 
 /** Absolute path to the marker file. */
@@ -89,8 +125,13 @@ export function markerPath(): string {
 export function enforceUpgradeTripwire(): void {
   if (isUpgradeCurrent()) return;
 
-  const code = getCodeVersion();
-  const recorded = readUpgradeState()?.version ?? 'none';
+  let code: CodeIdentity | null = null;
+  try {
+    code = getCodeIdentity();
+  } catch {
+    // The error message below remains actionable even when Git itself is unavailable.
+  }
+  const recorded = readUpgradeState();
 
   console.error(
     [
@@ -99,10 +140,12 @@ export function enforceUpgradeTripwire(): void {
       'NanoClaw stopped: update did not go through the supported path',
       '='.repeat(64),
       'This install was updated outside the sanctioned upgrade flow',
-      '(no upgrade marker, or the marker version does not match the code).',
+      '(no upgrade marker, or its version/commit/tree does not match the code).',
       '',
-      `  code version:     ${code}`,
-      `  recorded version: ${recorded}`,
+      `  code version:     ${code?.version ?? 'unknown'}`,
+      `  code commit:      ${code?.commit ?? 'unknown'}`,
+      `  recorded version: ${recorded?.version ?? 'none'}`,
+      `  recorded commit:  ${recorded?.commit ?? 'none'}`,
       '',
       "IF YOU'RE A HUMAN: you most likely ran `git pull` directly. Don't",
       'fix this by hand — open Claude Code in this folder and run',

@@ -12,6 +12,7 @@ const TEST_DIR = '/tmp/nanoclaw-test-upgrade-state';
 
 import {
   enforceUpgradeTripwire,
+  getCodeIdentity,
   getCodeVersion,
   isUpgradeCurrent,
   markerPath,
@@ -36,9 +37,11 @@ describe('upgrade-state', () => {
     expect(readUpgradeState()).toBeNull();
   });
 
-  it('write then read round-trips, with version/via/updatedAt', () => {
+  it('write then read round-trips, with version/commit/tree/via/updatedAt', () => {
     const written = writeUpgradeState({ version: '9.9.9', via: 'test' });
     expect(written).toMatchObject({ version: '9.9.9', via: 'test' });
+    expect(written.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(written.tree).toMatch(/^[0-9a-f]{40}$/);
     expect(written.updatedAt).toBeTruthy();
     expect(readUpgradeState()).toEqual(written);
   });
@@ -47,12 +50,25 @@ describe('upgrade-state', () => {
     expect(writeUpgradeState({ via: 'test' }).version).toBe(getCodeVersion());
   });
 
+  it('binds the marker to the exact Git commit and tree', () => {
+    expect(writeUpgradeState({ via: 'test' })).toMatchObject(getCodeIdentity());
+  });
+
   it('isUpgradeCurrent: false when absent, false on mismatch, true on match', () => {
     expect(isUpgradeCurrent()).toBe(false);
     writeUpgradeState({ version: '0.0.0-nope', via: 'test' });
     expect(isUpgradeCurrent()).toBe(false);
     writeUpgradeState({ version: getCodeVersion(), via: 'test' });
     expect(isUpgradeCurrent()).toBe(true);
+  });
+
+  it('rejects a legacy version-only marker even when the package version matches', () => {
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(TEST_DIR, 'upgrade-state.json'),
+      JSON.stringify({ version: getCodeVersion(), updatedAt: new Date().toISOString(), via: 'legacy' }),
+    );
+    expect(isUpgradeCurrent()).toBe(false);
   });
 
   it('treats a corrupt marker as absent (fails closed, never throws)', () => {
