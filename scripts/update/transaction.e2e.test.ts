@@ -90,6 +90,8 @@ function createForkFixture(options: { breaking?: boolean; externalPinMove?: bool
   const install = temp('nanoclaw-update-install-');
   fs.rmSync(install, { recursive: true });
   exec(path.dirname(install), 'git', ['clone', fork, install]);
+  exec(install, 'git', ['config', 'user.name', 'Test']);
+  exec(install, 'git', ['config', 'user.email', 'test@example.com']);
   exec(install, 'git', ['remote', 'add', 'upstream', official]);
   exec(install, 'git', ['fetch', 'upstream']);
   write(install, 'local-customization.txt', 'keep me\n');
