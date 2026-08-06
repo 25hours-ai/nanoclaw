@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   acknowledgeRequirement,
+  cleanupUpdate,
   cutoverUpdate,
   finishUpdate,
   prepareUpdate,
+  pruneTransactions,
   rollbackUpdate,
   validateUpdate,
   type UpdateRuntime,
@@ -144,7 +146,8 @@ function fakeRuntime(
       sleep: async () => {},
     },
     detectService: () => service,
-    stopService: async () => {
+    stopService: async (handle) => {
+      if (handle.mode === 'unmanaged') throw new Error('refusing unmanaged service');
       events.push('service stop');
     },
     drainContainers: async () => {
@@ -194,9 +197,18 @@ describe('update-nanoclaw transaction end to end', () => {
     expect(state.phase).toBe('complete');
     expect(events).toContain('service start');
 
+    const stageRoot = state.stageRoot;
+    const stageBranch = state.stageBranch;
+    state = cleanupUpdate(fixture.install, state.id, runtime);
+    expect(state.stageCleanedAt).toBeTruthy();
+    expect(fs.existsSync(stageRoot)).toBe(false);
+    expect(() => exec(fixture.install, 'git', ['rev-parse', '--verify', stageBranch])).toThrow();
+    expect(fs.existsSync(path.join(state.transactionRoot, 'snapshot'))).toBe(true);
+
     fs.writeFileSync(path.join(fixture.install, 'data/v2.db'), 'post-update-data');
     fs.writeFileSync(path.join(fixture.install, 'start-nanoclaw.sh'), '#!/bin/bash\nexit 1\n');
     fs.writeFileSync(path.join(fixture.install, 'nanoclaw.pid'), '9999\n');
+    runtime.detectService = () => ({ mode: 'unmanaged', active: true });
     state = await rollbackUpdate(fixture.install, state.id, runtime);
     expect(state.phase).toBe('rolled-back');
     expect(exec(fixture.install, 'git', ['rev-parse', 'HEAD'])).toBe(fixture.originalHead);
@@ -206,6 +218,75 @@ describe('update-nanoclaw transaction end to end', () => {
       '#!/bin/bash\nnode dist/index.js\n',
     );
     expect(fs.readFileSync(path.join(fixture.install, 'nanoclaw.pid'), 'utf8')).toBe('1234\n');
+  });
+
+  it('prunes only older terminal transactions and keeps the selected rollback point', async () => {
+    const fixture = createForkFixture();
+    previousUpdateDir = process.env.NANOCLAW_UPDATE_DIR;
+    process.env.NANOCLAW_UPDATE_DIR = temp('nanoclaw-update-state-');
+    const { runtime } = fakeRuntime(fixture.install);
+
+    let state = prepareUpdate({ projectRoot: fixture.install, upstreamRef: 'upstream/main' }, runtime);
+    state = await validateUpdate(fixture.install, state.id, runtime);
+    state = await cutoverUpdate(fixture.install, state.id, runtime);
+    state = await finishUpdate(fixture.install, state.id, runtime);
+
+    const oldId = '20000101000000-old';
+    const oldRoot = path.join(process.env.NANOCLAW_UPDATE_DIR!, oldId);
+    fs.mkdirSync(oldRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(oldRoot, 'state.json'),
+      JSON.stringify({
+        ...state,
+        id: oldId,
+        transactionRoot: oldRoot,
+        phase: 'rolled-back',
+        createdAt: '2000-01-01T00:00:00.000Z',
+        stageRoot: path.join(oldRoot, 'worktree'),
+        stageBranch: `update-nanoclaw/${oldId}`,
+      }),
+    );
+    const pendingId = '20000101000001-pending';
+    const pendingRoot = path.join(process.env.NANOCLAW_UPDATE_DIR!, pendingId);
+    fs.mkdirSync(pendingRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pendingRoot, 'state.json'),
+      JSON.stringify({
+        ...state,
+        id: pendingId,
+        transactionRoot: pendingRoot,
+        phase: 'prepared',
+        createdAt: '2000-01-01T00:00:01.000Z',
+        stageRoot: path.join(pendingRoot, 'worktree'),
+        stageBranch: `update-nanoclaw/${pendingId}`,
+      }),
+    );
+    const unsafeId = '20000101000002-unsafe';
+    const unsafeRoot = path.join(process.env.NANOCLAW_UPDATE_DIR!, unsafeId);
+    fs.mkdirSync(unsafeRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(unsafeRoot, 'state.json'),
+      JSON.stringify({
+        ...state,
+        id: unsafeId,
+        transactionRoot: unsafeRoot,
+        phase: 'complete',
+        createdAt: '2000-01-01T00:00:02.000Z',
+        stageRoot: fixture.install,
+        stageBranch: `update-nanoclaw/${unsafeId}`,
+      }),
+    );
+
+    const preview = pruneTransactions(fixture.install, state.id, true, runtime);
+    expect(preview.removed).toEqual([oldId]);
+    expect(fs.existsSync(oldRoot)).toBe(true);
+
+    const report = pruneTransactions(fixture.install, state.id, false, runtime);
+    expect(report.removed).toEqual([oldId]);
+    expect(fs.existsSync(oldRoot)).toBe(false);
+    expect(fs.existsSync(pendingRoot)).toBe(true);
+    expect(fs.existsSync(unsafeRoot)).toBe(true);
+    expect(fs.existsSync(state.transactionRoot)).toBe(true);
   });
 
   it('automatically restores the old checkout and pre-migration DB when new-service health fails', async () => {

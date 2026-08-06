@@ -51,11 +51,12 @@ export function getCodeIdentity(projectRoot: string = process.cwd()): CodeIdenti
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
 
-  return {
-    version: getCodeVersion(projectRoot),
-    commit: git('HEAD'),
-    tree: git('HEAD^{tree}'),
-  };
+  const version = getCodeVersion(projectRoot);
+  try {
+    return { version, commit: git('HEAD'), tree: git('HEAD^{tree}') };
+  } catch {
+    return { version, commit: 'unknown', tree: 'unknown' };
+  }
 }
 
 /**
@@ -125,13 +126,31 @@ export function markerPath(): string {
 export function enforceUpgradeTripwire(): void {
   if (isUpgradeCurrent()) return;
 
-  let code: CodeIdentity | null = null;
-  try {
-    code = getCodeIdentity();
-  } catch {
-    // The error message below remains actionable even when Git itself is unavailable.
-  }
+  const code = getCodeIdentity();
   const recorded = readUpgradeState();
+  const gitUnavailable = code.commit === 'unknown' || code.tree === 'unknown';
+  const exactCheckoutChanged =
+    recorded !== null &&
+    recorded.version === code.version &&
+    (recorded.commit !== code.commit || recorded.tree !== code.tree);
+  const humanGuidance = gitUnavailable
+    ? [
+        'Git could not identify this checkout. Restore Git access, then run',
+        '/update-nanoclaw. If a supported update already completed, the coding',
+        `agent can use the recovery command below even while Git is unavailable.`,
+      ]
+    : exactCheckoutChanged
+      ? [
+          'The code changed without a matching update record. This can happen',
+          'after pulling upstream changes or committing a local customization.',
+          'Run /update-nanoclaw for upstream changes. For an intentional local',
+          'commit, follow the local-customization steps in the recovery guide.',
+        ]
+      : [
+          "You most likely ran `git pull` directly. Don't fix this by hand —",
+          'open Claude Code in this folder and run /update-nanoclaw, which',
+          'repairs the install and clears this stop.',
+        ];
 
   console.error(
     [
@@ -147,9 +166,8 @@ export function enforceUpgradeTripwire(): void {
       `  recorded version: ${recorded?.version ?? 'none'}`,
       `  recorded commit:  ${recorded?.commit ?? 'none'}`,
       '',
-      "IF YOU'RE A HUMAN: you most likely ran `git pull` directly. Don't",
-      'fix this by hand — open Claude Code in this folder and run',
-      '/update-nanoclaw, which repairs the install and clears this stop.',
+      "IF YOU'RE A HUMAN:",
+      ...humanGuidance,
       '',
       'CODING AGENT: if you just ran /update-nanoclaw, /migrate-nanoclaw, or',
       'setup and it completed successfully, clear this automatically by running:',

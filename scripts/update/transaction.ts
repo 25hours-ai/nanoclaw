@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { getInstallSlug } from '../../src/install-slug.js';
 import { refreshInstalledSkills, type SkillsRefreshReport } from '../update-skills.js';
 import {
   createCommandRunner,
@@ -55,6 +56,15 @@ export interface UpdateState {
   lastError?: string;
   createdAt: string;
   completedAt?: string;
+  stageCleanedAt?: string;
+}
+
+export interface PruneReport {
+  schema: 'nanoclaw-update-prune/v1';
+  keepId: string;
+  dryRun: boolean;
+  removed: string[];
+  retained: string[];
 }
 
 export interface UpdateRuntime {
@@ -88,17 +98,25 @@ function tryGit(runtime: UpdateRuntime, root: string, args: string[]): { ok: boo
   return runtime.runner.tryRun('git', args, root);
 }
 
-function installSlug(projectRoot: string): string {
-  return createHash('sha1').update(projectRoot).digest('hex').slice(0, 8);
-}
-
 export function defaultTransactionsRoot(projectRoot: string): string {
   if (process.env.NANOCLAW_UPDATE_DIR) return path.resolve(process.env.NANOCLAW_UPDATE_DIR);
-  return path.join(path.dirname(projectRoot), '.nanoclaw-updates', installSlug(projectRoot));
+  return path.join(path.dirname(projectRoot), '.nanoclaw-updates', getInstallSlug(projectRoot));
 }
 
 function statePath(transactionRoot: string): string {
   return path.join(transactionRoot, 'state.json');
+}
+
+function hasSafeStatePaths(state: UpdateState, projectRoot: string, transactionRoot: string, id: string): boolean {
+  return (
+    state.id === id &&
+    path.resolve(state.projectRoot) === path.resolve(projectRoot) &&
+    path.resolve(state.transactionRoot) === path.resolve(transactionRoot) &&
+    path.resolve(state.stageRoot) === path.join(path.resolve(transactionRoot), 'worktree') &&
+    state.stageBranch === `update-nanoclaw/${id}` &&
+    /^backup\/pre-update-[0-9a-f]{8}-\d{14}-[0-9a-f]{8}$/.test(state.backupBranch) &&
+    /^pre-update-[0-9a-f]{8}-\d{14}-[0-9a-f]{8}$/.test(state.backupTag)
+  );
 }
 
 function saveState(state: UpdateState): void {
@@ -110,11 +128,13 @@ function saveState(state: UpdateState): void {
 }
 
 export function loadState(projectRoot: string, id: string): UpdateState {
-  const target = statePath(path.join(defaultTransactionsRoot(path.resolve(projectRoot)), id));
+  const expectedTransactionRoot = path.join(defaultTransactionsRoot(path.resolve(projectRoot)), id);
+  const target = statePath(expectedTransactionRoot);
   const state = JSON.parse(fs.readFileSync(target, 'utf8')) as UpdateState;
   if (state.schema !== 'nanoclaw-update/v1') throw new Error(`Unsupported update state in ${target}`);
-  if (path.resolve(state.projectRoot) !== path.resolve(projectRoot))
-    throw new Error('Update state belongs to another checkout');
+  if (!hasSafeStatePaths(state, projectRoot, expectedTransactionRoot, id)) {
+    throw new Error('Update state contains mismatched or unsafe paths');
+  }
   return state;
 }
 
@@ -399,8 +419,8 @@ function installAndBuild(root: string, state: UpdateState, runtime: UpdateRuntim
 }
 
 async function rollbackLocal(state: UpdateState, runtime: UpdateRuntime): Promise<void> {
-  const currentService = runtime.detectService(state.projectRoot);
-  await runtime.stopService(currentService);
+  if (!state.service) throw new Error('Update state has no captured service handle for rollback');
+  await runtime.stopService(state.service);
   git(runtime, state.projectRoot, ['reset', '--hard', state.originalHead]);
   restoreSnapshot(state);
   installAndBuild(state.projectRoot, state, runtime);
@@ -521,16 +541,98 @@ export async function rollbackUpdate(
   return state;
 }
 
+function removeStageArtifacts(state: UpdateState, runtime: UpdateRuntime): void {
+  const remove = tryGit(runtime, state.projectRoot, ['worktree', 'remove', '--force', state.stageRoot]);
+  if (!remove.ok) {
+    if (fs.existsSync(state.stageRoot)) throw new Error(`Could not remove staging worktree: ${remove.stdout}`);
+    tryGit(runtime, state.projectRoot, ['worktree', 'prune']);
+  }
+  deleteBranch(runtime, state.projectRoot, state.stageBranch);
+}
+
+function deleteBranch(runtime: UpdateRuntime, projectRoot: string, branch: string): void {
+  tryGit(runtime, projectRoot, ['branch', '-D', branch]);
+  if (tryGit(runtime, projectRoot, ['rev-parse', '--verify', `refs/heads/${branch}`]).ok) {
+    throw new Error(`Could not remove update branch: ${branch}`);
+  }
+}
+
+function deleteTag(runtime: UpdateRuntime, projectRoot: string, tag: string): void {
+  tryGit(runtime, projectRoot, ['tag', '-d', tag]);
+  if (tryGit(runtime, projectRoot, ['rev-parse', '--verify', `refs/tags/${tag}`]).ok) {
+    throw new Error(`Could not remove update tag: ${tag}`);
+  }
+}
+
+export function cleanupUpdate(projectRoot: string, id: string, runtime = createUpdateRuntime()): UpdateState {
+  const state = loadState(projectRoot, id);
+  if (state.phase !== 'complete' && state.phase !== 'rolled-back') {
+    throw new Error(`Cannot clean staging artifacts from ${state.phase}`);
+  }
+  removeStageArtifacts(state, runtime);
+  state.stageCleanedAt = new Date().toISOString();
+  saveState(state);
+  return state;
+}
+
+export function pruneTransactions(
+  projectRoot: string,
+  keepId: string,
+  dryRun: boolean,
+  runtime = createUpdateRuntime(),
+): PruneReport {
+  const resolvedProjectRoot = fs.realpathSync(projectRoot);
+  const root = path.resolve(defaultTransactionsRoot(resolvedProjectRoot));
+  const filesystemRoot = path.parse(root).root;
+  if (root === filesystemRoot || root === resolvedProjectRoot || resolvedProjectRoot.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Unsafe transaction root: ${root}`);
+  }
+  const keep = loadState(resolvedProjectRoot, keepId);
+  const terminal = new Set<UpdatePhase>(['complete', 'rolled-back', 'abandoned']);
+  const removed: string[] = [];
+  const retained: string[] = [];
+
+  for (const id of fs.existsSync(root) ? fs.readdirSync(root).sort() : []) {
+    const transactionRoot = path.join(root, id);
+    if (!fs.lstatSync(transactionRoot).isDirectory()) continue;
+    let state: UpdateState;
+    try {
+      state = JSON.parse(fs.readFileSync(statePath(transactionRoot), 'utf8')) as UpdateState;
+    } catch {
+      retained.push(id);
+      continue;
+    }
+    const valid =
+      state.schema === 'nanoclaw-update/v1' &&
+      hasSafeStatePaths(state, resolvedProjectRoot, transactionRoot, id);
+    const olderThanKeep = Date.parse(state.createdAt) < Date.parse(keep.createdAt);
+    if (!valid || id === keepId || !terminal.has(state.phase) || !olderThanKeep) {
+      retained.push(id);
+      continue;
+    }
+    removed.push(id);
+    if (dryRun) continue;
+    removeStageArtifacts(state, runtime);
+    if (state.backupBranch !== keep.backupBranch) {
+      deleteBranch(runtime, state.projectRoot, state.backupBranch);
+    }
+    if (state.backupTag !== keep.backupTag) {
+      deleteTag(runtime, state.projectRoot, state.backupTag);
+    }
+    fs.rmSync(transactionRoot, { recursive: true, force: true });
+  }
+
+  return { schema: 'nanoclaw-update-prune/v1', keepId, dryRun, removed, retained };
+}
+
 export function abandonUpdate(projectRoot: string, id: string, runtime = createUpdateRuntime()): UpdateState {
   const state = loadState(projectRoot, id);
   if (!['conflict', 'prepared', 'validated'].includes(state.phase)) {
     throw new Error(`Cannot abandon an update after cutover (${state.phase})`);
   }
-  const remove = tryGit(runtime, state.projectRoot, ['worktree', 'remove', '--force', state.stageRoot]);
-  if (!remove.ok) throw new Error(`Could not remove staging worktree: ${remove.stdout}`);
-  tryGit(runtime, state.projectRoot, ['branch', '-D', state.stageBranch]);
-  tryGit(runtime, state.projectRoot, ['branch', '-D', state.backupBranch]);
-  tryGit(runtime, state.projectRoot, ['tag', '-d', state.backupTag]);
+  removeStageArtifacts(state, runtime);
+  deleteBranch(runtime, state.projectRoot, state.backupBranch);
+  deleteTag(runtime, state.projectRoot, state.backupTag);
   state.phase = 'abandoned';
   state.completedAt = new Date().toISOString();
   saveState(state);
@@ -548,6 +650,7 @@ export function summarizeState(state: UpdateState): Record<string, unknown> {
     backupBranch: state.backupBranch,
     backupTag: state.backupTag,
     stageRoot: state.stageRoot,
+    stageCleanedAt: state.stageCleanedAt,
     changedFiles: state.changedFiles,
     requirements: state.requirements,
     skillRefresh: state.skillRefresh,

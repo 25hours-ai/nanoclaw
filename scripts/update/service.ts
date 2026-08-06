@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { getInstallSlug } from '../../src/install-slug.js';
 
 export interface CommandRunner {
   run(command: string, args: string[], cwd?: string): string;
@@ -63,10 +64,6 @@ export function defaultServiceEnvironment(runner = createCommandRunner()): Servi
   };
 }
 
-function installSlug(projectRoot: string): string {
-  return createHash('sha1').update(projectRoot).digest('hex').slice(0, 8);
-}
-
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -81,7 +78,7 @@ function escapeRegex(value: string): string {
 }
 
 export function detectService(projectRoot: string, env: ServiceEnvironment): ServiceHandle {
-  const slug = installSlug(projectRoot);
+  const slug = getInstallSlug(projectRoot);
   if (env.platform === 'darwin') {
     const name = `com.nanoclaw-v2-${slug}`;
     const definition = path.join(env.home, 'Library', 'LaunchAgents', `${name}.plist`);
@@ -175,7 +172,7 @@ export async function drainContainers(
   timeoutMs = 300_000,
 ): Promise<void> {
   const runtime = process.env.CONTAINER_RUNTIME ?? 'docker';
-  const label = `nanoclaw-install=${installSlug(projectRoot)}`;
+  const label = `nanoclaw-install=${getInstallSlug(projectRoot)}`;
   const started = Date.now();
   while (true) {
     const listed = env.runner.tryRun(runtime, ['ps', '-q', '--filter', `label=${label}`]);

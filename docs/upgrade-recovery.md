@@ -35,6 +35,21 @@ Don't just clear the tripwire — that skips the work the supported flow does. I
 
 Once it finishes it stamps the marker for you, and the next start is clean.
 
+## If you committed a local customization
+
+An intentional local commit changes the checkout identity too. First verify the
+commit contains only the customization you intended and run the same build,
+tests, migrations, and image work that `/update-nanoclaw` would require. Then
+stamp the reviewed checkout with the override below. Do not run
+`/update-nanoclaw` just to erase or replace a local customization.
+
+## If Git is unavailable
+
+The override still works when `git` is missing or the checkout metadata cannot
+be read. It records the commit and tree as `unknown` so a verified install can
+start. Restore Git access when practical, repeat the relevant validation, and
+stamp again; the exact commit and tree will then be recorded normally.
+
 ## If you have your own upgrade flow
 
 If you've built your own way to upgrade — a custom skill, a deploy script, a CI job, a service that pulls and restarts — it won't stamp the marker, so the host will trip on the next start. Add the stamp after validation and required migrations succeed, immediately before the health-gated restart:

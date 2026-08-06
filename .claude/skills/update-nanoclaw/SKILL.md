@@ -74,7 +74,7 @@ an older local skill still executes the newest safety code before any mutation.
 controller_dir="$(mktemp -d)"
 git archive "$upstream_ref" \
   scripts/update-nanoclaw.ts scripts/update scripts/update-skills.ts \
-  scripts/skill-apply.ts scripts/skill-directives.ts \
+  scripts/skill-apply.ts scripts/skill-directives.ts src/install-slug.ts \
   | tar -x -C "$controller_dir"
 ```
 
@@ -118,8 +118,10 @@ pnpm exec tsx "$stageRoot/scripts/update-nanoclaw.ts" validate \
 Validation performs a fork-safe structured refresh of every installed channel
 and provider, commits refreshed payloads in the staging branch, installs frozen
 dependencies, runs the host build and full host tests, and runs the container
-dependency/typecheck leg when Bun is available. Any selected skill refresh or
-validation failure blocks cutover and the completion stamp.
+dependency/typecheck leg when Bun is available. A provider skill that declares
+Bun dependencies does not require Bun on the host: refresh runs the exact Bun
+version pinned by `container/Dockerfile` through pnpm. Any selected skill
+refresh or validation failure blocks cutover and the completion stamp.
 
 Fix only failures caused by the staged update, inside `stageRoot`, commit the
 fix, and re-run validation. Do not mutate the live checkout to repair staging.
@@ -184,6 +186,14 @@ Finish stamps the exact version/commit/tree, restarts the service mode detected
 before cutover, and waits for the process, CLI socket, and a real CLI request.
 Only `phase: complete` is success.
 
+After success, remove the staging worktree and its temporary branch from the
+live checkout. This keeps the backup branch/tag and mutable snapshot intact for
+rollback:
+
+```bash
+pnpm exec tsx scripts/update-nanoclaw.ts cleanup --id "$id"
+```
+
 If health fails, the controller restores the previous Git commit and mutable
 state, rebuilds the previous image, restarts the old service, and verifies it.
 If an external component was changed, also execute the recorded external
@@ -211,5 +221,15 @@ pnpm exec tsx scripts/update-nanoclaw.ts rollback --id "$id"
 
 Do not describe the Git tag alone as full rollback. The transaction snapshot is
 what restores SQLite and other mutable local state. Keep the newest successful
-transaction until the next update completes; older transaction directories can
-then be removed after the user confirms they no longer need that rollback.
+transaction until the next update completes. Then preview older terminal
+transactions that are safe to prune:
+
+```bash
+pnpm exec tsx scripts/update-nanoclaw.ts prune --id "$id" --dry-run
+```
+
+Show the `removed` list and ask for confirmation. If confirmed, run the same
+command without `--dry-run`. Pruning keeps the selected transaction, every
+newer transaction, and every nonterminal transaction. It removes older terminal
+snapshots and their staging/backup Git references. Never delete transaction
+directories directly.

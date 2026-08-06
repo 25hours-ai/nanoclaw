@@ -53,6 +53,37 @@ describe('installed skill detection', () => {
 });
 
 describe('registry refresh end to end', () => {
+  it('uses the container-pinned Bun through pnpm when Bun is unavailable on the host', async () => {
+    const root = temp('nanoclaw-skills-bun-fallback-');
+    write(root, 'src/channels/index.ts', "import './cli.js';\n");
+    write(root, 'src/providers/index.ts', "import './opencode.js';\n");
+    write(root, 'container/agent-runner/src/providers/index.ts', "import './claude.js';\nimport './opencode.js';\n");
+    write(root, 'container/Dockerfile', 'ARG BUN_VERSION=1.3.12\n');
+    write(
+      root,
+      '.claude/skills/add-opencode/SKILL.md',
+      [
+        '# Apply',
+        '```nc:dep manager:bun cwd:container/agent-runner',
+        'example-provider@1.2.3',
+        '```',
+      ].join('\n'),
+    );
+    const commands: string[] = [];
+
+    const report = await refreshInstalledSkills(root, 'all', {
+      commandAvailable: (command) => command !== 'bun',
+      exec: (command) => {
+        commands.push(command);
+      },
+    });
+
+    expect(report.success, JSON.stringify(report, null, 2)).toBe(true);
+    expect(commands).toEqual([
+      'cd container/agent-runner && pnpm --package=bun@1.3.12 dlx bun add example-provider@1.2.3',
+    ]);
+  });
+
   it('refreshes from official upstream when the user fork origin has no registry branch', async () => {
     const seed = temp('nanoclaw-skills-seed-');
     run(seed, 'git', ['init', '-b', 'main']);

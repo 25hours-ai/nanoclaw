@@ -4,15 +4,18 @@ import { pathToFileURL } from 'node:url';
 import {
   abandonUpdate,
   acknowledgeRequirement,
+  cleanupUpdate,
   cutoverUpdate,
   finishUpdate,
   loadState,
   prepareUpdate,
+  pruneTransactions,
   resumePreparedUpdate,
   rollbackUpdate,
   summarizeState,
   validateUpdate,
   type UpdateState,
+  type PruneReport,
 } from './update/transaction.js';
 
 interface ParsedArgs {
@@ -25,6 +28,7 @@ interface ParsedArgs {
   requirement?: string;
   status?: 'succeeded' | 'failed';
   rollback?: string;
+  dryRun?: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -33,6 +37,10 @@ function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = { command, projectRoot: process.cwd() };
   for (let i = 1; i < argv.length; i += 1) {
     const flag = argv[i];
+    if (flag === '--dry-run') {
+      parsed.dryRun = true;
+      continue;
+    }
     const value = argv[++i];
     if (value === undefined) throw new Error(`Missing value for ${flag}`);
     if (flag === '--project-root') parsed.projectRoot = path.resolve(value);
@@ -57,7 +65,7 @@ function requireValue<T>(value: T | undefined, name: string): T {
   return value;
 }
 
-async function execute(args: ParsedArgs): Promise<UpdateState> {
+async function execute(args: ParsedArgs): Promise<UpdateState | PruneReport> {
   if (args.command === 'prepare') {
     return prepareUpdate({
       projectRoot: args.projectRoot,
@@ -81,6 +89,8 @@ async function execute(args: ParsedArgs): Promise<UpdateState> {
   }
   if (args.command === 'finish') return finishUpdate(args.projectRoot, id);
   if (args.command === 'rollback') return rollbackUpdate(args.projectRoot, id);
+  if (args.command === 'cleanup') return cleanupUpdate(args.projectRoot, id);
+  if (args.command === 'prune') return pruneTransactions(args.projectRoot, id, args.dryRun ?? false);
   if (args.command === 'abandon') return abandonUpdate(args.projectRoot, id);
   if (args.command === 'status') return loadState(args.projectRoot, id);
   throw new Error(`Unknown command: ${args.command}`);
@@ -88,9 +98,10 @@ async function execute(args: ParsedArgs): Promise<UpdateState> {
 
 async function main(): Promise<void> {
   try {
-    const state = await execute(parseArgs(process.argv.slice(2)));
-    process.stdout.write(`${JSON.stringify(summarizeState(state), null, 2)}\n`);
-    if (state.phase === 'conflict') process.exitCode = 2;
+    const result = await execute(parseArgs(process.argv.slice(2)));
+    const output = result.schema === 'nanoclaw-update-prune/v1' ? result : summarizeState(result);
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    if (result.schema === 'nanoclaw-update/v1' && result.phase === 'conflict') process.exitCode = 2;
   } catch (err) {
     process.stderr.write(
       `${JSON.stringify(

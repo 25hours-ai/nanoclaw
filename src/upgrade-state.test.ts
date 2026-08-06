@@ -54,6 +54,22 @@ describe('upgrade-state', () => {
     expect(writeUpgradeState({ via: 'test' })).toMatchObject(getCodeIdentity());
   });
 
+  it('can stamp and validate a recovery marker when Git is unavailable', () => {
+    const projectRoot = fs.mkdtempSync('/tmp/nanoclaw-no-git-');
+    fs.writeFileSync(path.join(projectRoot, 'package.json'), JSON.stringify({ version: '1.2.3' }));
+    try {
+      expect(getCodeIdentity(projectRoot)).toEqual({ version: '1.2.3', commit: 'unknown', tree: 'unknown' });
+      expect(writeUpgradeState({ via: 'recovery', projectRoot })).toMatchObject({
+        version: '1.2.3',
+        commit: 'unknown',
+        tree: 'unknown',
+      });
+      expect(isUpgradeCurrent(projectRoot)).toBe(true);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('isUpgradeCurrent: false when absent, false on mismatch, true on match', () => {
     expect(isUpgradeCurrent()).toBe(false);
     writeUpgradeState({ version: '0.0.0-nope', via: 'test' });
