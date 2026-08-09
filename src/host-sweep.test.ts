@@ -49,7 +49,7 @@ describe('decideStuckAction', () => {
     expect(res.heartbeatAgeMs).toBeGreaterThan(ABSOLUTE_CEILING_MS);
   });
 
-  it('skips the ceiling check when no heartbeat file exists (fresh container not yet ticked)', () => {
+  it('skips the ceiling check when no heartbeat file exists and no fallback is known', () => {
     // A freshly-spawned container hasn't produced any SDK events yet, so no
     // heartbeat. Prior behavior treated this as infinitely stale and killed
     // every container within seconds of spawn. With no claims either, we
@@ -61,6 +61,38 @@ describe('decideStuckAction', () => {
       claims: [],
     });
     expect(res.action).toBe('ok');
+  });
+
+  it('does not kill a fresh spawn when heartbeat is absent but last_active is recent', () => {
+    // sessionLastActiveMs stands in for the heartbeat file right after spawn
+    // (markContainerRunning sets last_active at the same moment), so a
+    // container that hasn't ticked yet still gets the full grace window.
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: 0,
+      sessionLastActiveMs: BASE - 5_000,
+      containerState: null,
+      claims: [],
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('kills on ceiling using session last_active as a fallback when heartbeat never ticked', () => {
+    // Regression: a container spawns, finds nothing that warrants an SDK
+    // event, and sits idle indefinitely with no heartbeat file ever created.
+    // Prior behavior exempted it from the ceiling check forever; last_active
+    // closes that loophole.
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: 0,
+      sessionLastActiveMs: BASE - ABSOLUTE_CEILING_MS - 1_000,
+      containerState: null,
+      claims: [],
+    });
+    expect(res.action).toBe('kill-ceiling');
+    if (res.action !== 'kill-ceiling') return;
+    expect(res.ceilingMs).toBe(ABSOLUTE_CEILING_MS);
+    expect(res.heartbeatAgeMs).toBeGreaterThan(ABSOLUTE_CEILING_MS);
   });
 
   it('kills on claim-stuck when heartbeat is absent AND a claim has aged past tolerance', () => {
