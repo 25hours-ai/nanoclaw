@@ -21,17 +21,22 @@ safe to re-run; anything a parser can't apply falls back to the prose beside it.
 
 ### 1. Copy the adapter, pairing helper, tests, and container skill
 
-Fetch the `channels` branch and copy the Dial adapter, its pairing store (with
-its test), the registration test, and the `dial-cli` container skill into place
-(overwrite — the branch is canonical):
+Fetch the `channels` branch and copy the Dial adapter, its pairing store and
+user-agent helper (each with its test), the registration test, and the
+`dial-cli` container skill into place (overwrite — the branch is canonical):
 
 ```nc:copy from-branch:channels
 src/channels/dial.ts
 src/channels/dial-pairing.ts
 src/channels/dial-pairing.test.ts
+src/channels/dial-user-agent.ts
+src/channels/dial-user-agent.test.ts
 src/channels/dial-registration.test.ts
 container/skills/dial-cli/SKILL.md
 ```
+
+`dial.ts` imports `dial-user-agent.js` at module scope, so omitting that helper
+breaks the build and every test that loads the channel barrel.
 
 ### 2. Register the adapter
 
@@ -60,9 +65,13 @@ Pinned to exact versions — the supply-chain policy rejects ranges and `latest`
 pairing card:
 
 ```nc:dep
-@getdial/sdk@0.17.0
+@getdial/sdk@0.21.0
 qrcode@1.5.4
 ```
+
+`0.21.0` is a floor, not a preference: it added the `userAgent` option on
+`DialConfig` that `dial.ts` passes to `DialClient`. Older pins fail the build
+with `TS2353: 'userAgent' does not exist in type 'DialConfig'`.
 
 ### 5. Build and validate
 
