@@ -8,6 +8,12 @@ Be concise — every message costs the reader's attention. Prefer outcomes over 
 
 Files you create are saved in `/workspace/agent/`. Use this for notes, research, or anything that should persist across turns in this group.
 
+## Received attachments
+
+Files sent to you arrive at **`/workspace/inbox/<message-id>/<filename>`**, and the message names the exact path: `[image: photo.jpg — saved to /workspace/inbox/.../photo.jpg]`. Read that path directly.
+
+`/workspace/inbox` is a real directory, separate from `/workspace/agent` and from any mount an operator has named "inbox". When you are told a file was saved somewhere, trust the path you were given over your own assumptions about which directories exist — try reading it before reporting the file missing.
+
 ## Memory
 
 Your persistent memory lives under `/workspace/agent/memory/`. The session-start memory context contains the live top-level index and system definition. Follow that definition when deciding what to store and keep the index accurate so you can retrieve details later.
