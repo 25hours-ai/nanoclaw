@@ -5,16 +5,16 @@
 # deterministic steps — no prompts:
 #
 #   1. Install the pinned `dial` CLI on the HOST if missing (needed to
-#      authenticate; `dial signup`/`onboard` write the host auth.json).
+#      authenticate; `dial auth login`/`verify-otp` write the host auth.json).
 #   2. Idempotently add @getdial/cli (pinned) to container/cli-tools.json.
 #   3. Mount the dial-cli container skill into container/skills/ (+ live sessions).
 #   4. Register the Dial API key with OneCLI (host-pattern api.getdial.ai) by
 #      reading it from the HOST auth.json (the single source of truth, written by
-#      `dial signup`/`dial onboard`); else reports CREDENTIAL: none.
+#      `dial auth login`/`dial auth verify-otp`); else reports CREDENTIAL: none.
 #   5. Rebuild the agent image (only when the manifest changed) and stop running
 #      agent containers so they respawn on the new image with the CLI + skill.
 #
-# Interactive authentication (`dial signup <email>` + `dial onboard --code`) is
+# Interactive authentication (`dial auth login <email>` + `dial auth verify-otp --code`) is
 # intentionally NOT here — the caller runs it (see SKILL.md), which writes the
 # host auth.json this script reads on the next run.
 #
@@ -25,7 +25,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Keep the pin in sync with the SKILL.md version note.
-CLI_VERSION="0.33.1"
+CLI_VERSION="0.37.0"
 SKILL_SRC=".claude/skills/add-dial-tool/container-skills/dial-cli"
 AUTH_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"
 
@@ -44,7 +44,7 @@ emit() {
 }
 
 # 1. Ensure the pinned `dial` CLI is on the HOST (only if missing). It's needed
-#    to authenticate — `dial signup`/`dial onboard` write the host auth.json.
+#    to authenticate — `dial auth login`/`dial auth verify-otp` write the host auth.json.
 if ! command -v dial >/dev/null 2>&1; then
   log "installing the dial CLI on the host (npm i -g @getdial/cli@${CLI_VERSION})"
   npm install -g "@getdial/cli@${CLI_VERSION}" >&2 || { emit failed "failed to install the host dial CLI"; exit 1; }
@@ -74,7 +74,7 @@ for s in data/v2-sessions/ag-*; do
 done
 
 # 4. Register the credential with OneCLI from the HOST auth.json — the single
-#    source of truth, written by `dial signup`/`dial onboard`.
+#    source of truth, written by `dial auth login`/`dial auth verify-otp`.
 KEY=""
 [ -f "$AUTH_FILE" ] && KEY=$(jq -r '.apiKey // empty' "$AUTH_FILE" 2>/dev/null || true)
 if [ -n "$KEY" ]; then
@@ -98,7 +98,7 @@ if [ -n "$KEY" ]; then
   fi
   CREDENTIAL=set
 else
-  log "no host auth.json at ${AUTH_FILE} — authenticate with \`dial signup\`/\`dial onboard\` (see SKILL.md), then re-run"
+  log "no host auth.json at ${AUTH_FILE} — authenticate with \`dial auth login\`/\`dial auth verify-otp\` (see SKILL.md), then re-run"
 fi
 
 # 5. Rebuild the image (only if the manifest changed) + restart running containers.
