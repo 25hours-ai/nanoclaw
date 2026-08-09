@@ -40,8 +40,14 @@ re-copy from the `channels` branch and rebuild):
 ```bash
 git fetch origin channels
 git show origin/channels:src/channels/dial.ts > src/channels/dial.ts
+git show origin/channels:src/channels/dial-user-agent.ts > src/channels/dial-user-agent.ts
 pnpm run build
 ```
+
+`dial.ts` imports `dial-user-agent.js`, so refresh the two together — pulling the
+adapter alone leaves a dangling import and the build fails. If the build reports
+`TS2353: 'userAgent' does not exist in type 'DialConfig'`, the pinned
+`@getdial/sdk` predates 0.21.0; re-run `/add-dial` to pick up the current pin.
 
 A stale single-number adapter will misfile the new number's messages into the
 first line and reply from the wrong number.
