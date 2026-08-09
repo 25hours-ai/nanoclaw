@@ -63,29 +63,25 @@ describe('decideStuckAction', () => {
     expect(res.action).toBe('ok');
   });
 
-  it('does not kill a fresh spawn when heartbeat is absent but last_active is recent', () => {
-    // sessionLastActiveMs stands in for the heartbeat file right after spawn
-    // (markContainerRunning sets last_active at the same moment), so a
-    // container that hasn't ticked yet still gets the full grace window.
+  it('does not kill a fresh spawn when heartbeat is absent', () => {
     const res = decideStuckAction({
       now: BASE,
       heartbeatMtimeMs: 0,
-      sessionLastActiveMs: BASE - 5_000,
+      containerStartedAtMs: BASE - 5_000,
       containerState: null,
       claims: [],
     });
     expect(res.action).toBe('ok');
   });
 
-  it('kills on ceiling using session last_active as a fallback when heartbeat never ticked', () => {
+  it('kills on ceiling using container spawn time when heartbeat never ticked', () => {
     // Regression: a container spawns, finds nothing that warrants an SDK
     // event, and sits idle indefinitely with no heartbeat file ever created.
-    // Prior behavior exempted it from the ceiling check forever; last_active
-    // closes that loophole.
+    // Prior behavior exempted it from the ceiling check forever.
     const res = decideStuckAction({
       now: BASE,
       heartbeatMtimeMs: 0,
-      sessionLastActiveMs: BASE - ABSOLUTE_CEILING_MS - 1_000,
+      containerStartedAtMs: BASE - ABSOLUTE_CEILING_MS - 1_000,
       containerState: null,
       claims: [],
     });
@@ -93,6 +89,17 @@ describe('decideStuckAction', () => {
     if (res.action !== 'kill-ceiling') return;
     expect(res.ceilingMs).toBe(ABSOLUTE_CEILING_MS);
     expect(res.heartbeatAgeMs).toBeGreaterThan(ABSOLUTE_CEILING_MS);
+  });
+
+  it('prefers a heartbeat over the container spawn time', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerStartedAtMs: BASE - ABSOLUTE_CEILING_MS - 1_000,
+      containerState: null,
+      claims: [],
+    });
+    expect(res.action).toBe('ok');
   });
 
   it('kills on claim-stuck when heartbeat is absent AND a claim has aged past tolerance', () => {

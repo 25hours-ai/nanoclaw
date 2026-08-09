@@ -19,9 +19,9 @@
  *        → kill. Covers the "alive but silent for 30 min" case. Extended
  *        only while Bash is declared as running longer, honouring the
  *        user's own timeout directive. Kill then resets processing rows.
- *        When no heartbeat file exists yet, falls back to the session's
- *        `last_active` (set when the container is marked running) so a
- *        container that goes idle without ever reaching an SDK event —
+ *        When no heartbeat file exists yet, falls back to the tracked
+ *        container spawn time so a container that goes idle without ever
+ *        reaching an SDK event —
  *        and so never writes a heartbeat — still ages out instead of
  *        living forever (see decideStuckAction's grace-period comment).
  *
@@ -50,7 +50,7 @@ import {
 } from './db/session-db.js';
 import { log } from './log.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
-import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 
 /**
@@ -88,18 +88,11 @@ export type StuckDecision =
 export function decideStuckAction(args: {
   now: number;
   heartbeatMtimeMs: number; // 0 when heartbeat file absent
-  // 0/undefined when unknown. Used only as a fallback for the ceiling check
-  // when heartbeatMtimeMs is 0 — see comment below. Callers should pass the
-  // session's `last_active` (set when the container is marked running), NOT
-  // a value that free-runs on every inbound message, or a container that
-  // keeps receiving messages without ever ticking a heartbeat would dodge
-  // the ceiling indefinitely — the same failure mode this fallback exists
-  // to close.
-  sessionLastActiveMs?: number;
+  containerStartedAtMs?: number; // fallback when heartbeat file absent
   containerState: ContainerState | null;
   claims: Array<{ message_id: string; status_changed: string }>;
 }): StuckDecision {
-  const { now, heartbeatMtimeMs, sessionLastActiveMs, containerState, claims } = args;
+  const { now, heartbeatMtimeMs, containerStartedAtMs, containerState, claims } = args;
   const declaredBashMs = bashTimeoutMs(containerState);
 
   // Ceiling check prefers the heartbeat file's mtime. A freshly-spawned
@@ -110,15 +103,15 @@ export function decideStuckAction(args: {
   // without its poll loop ever reaching an SDK event, in which case a
   // heartbeat file is never created for the rest of that container's life,
   // and it sits alive-but-idle forever, immune to this check. Falling back
-  // to the session's last-marked-running timestamp gives fresh spawns the
-  // same grace period as before (age starts at ~0) while still aging out a
+  // to the container's spawn timestamp gives fresh spawns the same grace
+  // period as before (age starts at ~0) while still aging out a
   // container that never ticks. Genuinely-dead containers that never wrote a
   // heartbeat AND have no session record are caught by the separate
   // "container process not running" cleanup path, not here. If a fresh
   // container is hanging at the gate (claimed a message but never did
   // anything) the claim-stuck check below handles it independently of this
   // fallback.
-  const effectiveHeartbeatMs = heartbeatMtimeMs !== 0 ? heartbeatMtimeMs : (sessionLastActiveMs ?? 0);
+  const effectiveHeartbeatMs = heartbeatMtimeMs !== 0 ? heartbeatMtimeMs : (containerStartedAtMs ?? 0);
   if (effectiveHeartbeatMs !== 0) {
     const heartbeatAge = now - effectiveHeartbeatMs;
     const ceiling = Math.max(ABSOLUTE_CEILING_MS, declaredBashMs ?? 0);
@@ -298,12 +291,6 @@ function heartbeatMtimeMs(agentGroupId: string, sessionId: string): number {
   }
 }
 
-function lastActiveMs(lastActive: string | null): number | undefined {
-  if (!lastActive) return undefined;
-  const ms = parseSqliteUtc(lastActive);
-  return Number.isNaN(ms) ? undefined : ms;
-}
-
 function bashTimeoutMs(state: ContainerState | null): number | null {
   if (!state || state.current_tool !== 'Bash') return null;
   return typeof state.tool_declared_timeout_ms === 'number' ? state.tool_declared_timeout_ms : null;
@@ -318,7 +305,7 @@ function enforceRunningContainerSla(
   const decision = decideStuckAction({
     now: Date.now(),
     heartbeatMtimeMs: heartbeatMtimeMs(agentGroupId, session.id),
-    sessionLastActiveMs: lastActiveMs(session.last_active),
+    containerStartedAtMs: getContainerStartedAtMs(session.id),
     containerState: getContainerState(outDb),
     claims: getProcessingClaims(outDb),
   });
