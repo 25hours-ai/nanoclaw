@@ -14,7 +14,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { parseMcpServerConfig } from '../../container-config.js';
+import { parseMcpServerConfig, validateMcpServerName } from '../../container-config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
@@ -128,6 +128,7 @@ export function validateAddMcpServer(content: Record<string, unknown>, session: 
   }
   let serverConfig;
   try {
+    validateMcpServerName(serverName);
     serverConfig = parseMcpServerConfig(content);
     // eslint-disable-next-line no-catch-all/no-catch-all -- parse failures are expected user input errors
   } catch (err) {
@@ -161,10 +162,24 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>, 
 
   let fields: string[];
   if (serverConfig.type === 'http') {
+    // Redact per path segment and per query value, never the origin — the
+    // admin must always see the true destination host, and SECRET_VALUE_RE
+    // is start-anchored so testing the whole URL would match nothing. A
+    // Zapier-style https://host/s/<token>/mcp must not render the token raw.
+    const u = new URL(serverConfig.url);
+    const redactSeg = (s: string): string => (SECRET_VALUE_RE.test(s) ? redactSecret(s) : s);
+    const path = u.pathname.split('/').map(redactSeg).join('/');
+    // Keep the query byte-faithful unless a value actually needs redacting —
+    // re-serializing decodes percent-escapes and can invent structure.
+    const entries = [...u.searchParams];
+    const query = entries.some(([, v]) => SECRET_VALUE_RE.test(v))
+      ? `?${entries.map(([k, v]) => `${k}=${redactSeg(v)}`).join('&')}`
+      : u.search;
+    const displayUrl = u.origin + path + query;
     fields = [
       `name: ${escapeInvisibles(JSON.stringify(serverName))}`,
       `type: ${escapeInvisibles(JSON.stringify(serverConfig.type))}`,
-      `url: ${escapeInvisibles(JSON.stringify(serverConfig.url))}`,
+      `url: ${escapeInvisibles(JSON.stringify(displayUrl))}`,
     ];
   } else {
     const args = serverConfig.args ?? [];

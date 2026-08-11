@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parse } from 'yaml';
 
-import { parseMcpServerConfig, type McpServerConfig } from '../container-config.js';
+import { parseMcpServerConfig, validateMcpServerName, type McpServerConfig } from '../container-config.js';
 
 /** A parsed template folder. Pure data — no DB, no side effects. */
 export interface Template {
@@ -29,6 +29,9 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+/** Every field a template `.mcp.json` server entry may carry. */
+const MCP_TEMPLATE_FIELDS = ['type', 'command', 'args', 'env', 'url', 'instructions'];
+
 /**
  * Read and validate a template folder into a typed object. The folder and
  * context/instructions.md are required; optional task files are strict so a
@@ -40,13 +43,23 @@ export function parseTemplate(dir: string): Template {
   const mcpServers: Record<string, McpServerConfig> = {};
   for (const [name, config] of Object.entries(asRecord(asRecord(readJson(path.join(dir, '.mcp.json'))).mcpServers))) {
     try {
+      validateMcpServerName(name);
       const input = asRecord(config);
+      // Reject rather than silently drop unknown fields — a template author
+      // pasting a config with e.g. `headers` must hear about it.
+      const unknownField = Object.keys(input).find((key) => !MCP_TEMPLATE_FIELDS.includes(key));
+      if (unknownField !== undefined) {
+        throw new Error(`unknown field "${unknownField}" (allowed: ${MCP_TEMPLATE_FIELDS.join(', ')})`);
+      }
       const server = parseMcpServerConfig(input);
+      // `streamable-http` is the MCP Registry's spelling — accept it so
+      // configs pasted from vendor docs work unmodified.
+      const inputType = input.type === 'streamable-http' ? 'http' : input.type;
       if (
-        (server.type === 'http' && input.type !== 'http') ||
-        (server.type !== 'http' && input.type !== undefined && input.type !== 'stdio')
+        (server.type === 'http' && inputType !== 'http') ||
+        (server.type !== 'http' && inputType !== undefined && inputType !== 'stdio')
       ) {
-        throw new Error('type must be "http" for url or "stdio" for command');
+        throw new Error('type must be "http" (or "streamable-http") for url or "stdio" for command');
       }
       mcpServers[name] = server;
     } catch (err) {

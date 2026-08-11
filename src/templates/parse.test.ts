@@ -93,6 +93,18 @@ describe('parseTemplate', () => {
     expect(() => parseTemplate(dir)).toThrow(/Template MCP server "docs" is invalid:.*HTTPS/);
   });
 
+  it('accepts "streamable-http" (the MCP Registry spelling) as an alias for "http"', () => {
+    write(
+      '.mcp.json',
+      JSON.stringify({ mcpServers: { docs: { type: 'streamable-http', url: 'https://mcp.example.com/mcp' } } }),
+    );
+    write('context/instructions.md', 'Be helpful.');
+
+    expect(parseTemplate(dir).mcpServers).toEqual({
+      docs: { type: 'http', url: 'https://mcp.example.com/mcp' },
+    });
+  });
+
   it.each([
     ['missing type for url', { url: 'https://mcp.example.com/mcp' }],
     ['unsupported type', { type: 'sse', url: 'https://mcp.example.com/mcp' }],
@@ -101,7 +113,21 @@ describe('parseTemplate', () => {
     write('.mcp.json', JSON.stringify({ mcpServers: { docs: config } }));
     write('context/instructions.md', 'Be helpful.');
 
-    expect(() => parseTemplate(dir)).toThrow(/type must be "http" for url or "stdio" for command/);
+    expect(() => parseTemplate(dir)).toThrow(
+      'type must be "http" (or "streamable-http") for url or "stdio" for command',
+    );
+  });
+
+  it('rejects an MCP server with an unknown field instead of silently dropping it', () => {
+    write(
+      '.mcp.json',
+      JSON.stringify({
+        mcpServers: { docs: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { 'X-Api-Key': 'stub' } } },
+      }),
+    );
+    write('context/instructions.md', 'Be helpful.');
+
+    expect(() => parseTemplate(dir)).toThrow(/unknown field "headers"/);
   });
 
   it.each([

@@ -1,6 +1,11 @@
 import { randomUUID } from 'crypto';
 
-import { parseMcpServerConfig, type AdditionalMountConfig, type McpServerConfig } from '../../container-config.js';
+import {
+  parseMcpServerConfig,
+  validateMcpServerName,
+  type AdditionalMountConfig,
+  type McpServerConfig,
+} from '../../container-config.js';
 import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { createAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
@@ -334,12 +339,13 @@ registerResource({
       access: 'approval',
       description:
         'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
-        'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] or --url <https-url>.',
+        'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] or --url <url> (HTTPS, or plain HTTP for localhost / host.docker.internal).',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
         const name = args.name as string;
         if (!name) throw new Error('--name is required');
+        validateMcpServerName(name);
 
         const row = getContainerConfig(id);
         if (!row) throw new Error(`No container config for group: ${id}`);

@@ -149,7 +149,9 @@ won't reach an already-created agent. Re-stamp the same name to update it.
 ## MCP servers and credentials
 
 **Templates declare MCP servers, not secrets.** Local servers use `command` +
-`args`; remote Streamable HTTP servers require `type: "http"` + an HTTPS `url`:
+`args`; remote Streamable HTTP servers require `type: "http"` (the MCP
+Registry spelling `"streamable-http"` is accepted as an alias) + an HTTPS
+`url`:
 
 ```json
 {
@@ -163,9 +165,12 @@ won't reach an already-created agent. Re-stamp the same name to update it.
 }
 ```
 
-Remote URLs may contain only the HTTPS origin and path. Userinfo, query
-parameters, and fragments are rejected; authentication belongs in the
-credentials proxy.
+Remote URLs must not carry secrets: userinfo, fragments, and
+credential-looking query parameters (`?api_key=…`, `?token=…`) are rejected;
+authentication belongs in the credentials proxy. Non-secret query parameters
+(e.g. Datadog's `?toolsets=apm`) are fine, and plain HTTP is allowed only
+for `localhost` / `host.docker.internal`. Unknown fields in a server entry
+(e.g. `headers`) are rejected rather than silently dropped.
 
 Credentials are held by the **credentials proxy** and injected into outbound
 HTTPS calls at the proxy boundary, matched by API host, at request time. The key

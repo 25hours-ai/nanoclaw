@@ -30,7 +30,7 @@ standing brief and marks the folder as a template.
 │   │                          #           CLAUDE.md/AGENTS.md every spawn
 │   └── additional_context/    # optional: extra .md files
 │       └── *.md
-├── .mcp.json             # optional: local command or remote HTTPS MCP servers, NO secrets
+├── .mcp.json             # optional: { "mcpServers": { ... } } — local command or remote HTTPS URL, NO secrets
 ├── skills/<name>/        # optional: one folder per skill (SKILL.md + references/), copied whole
 └── README.md             # recommended: per-template docs
 ```
@@ -45,8 +45,11 @@ Notes:
   servers + skills. The agent's runtime/provider is chosen separately
   (`ncl groups config update --provider …` or during setup).
 - **MCP transport is explicit.** Local servers use `command` + `args`; remote
-  Streamable HTTP servers use `type: "http"` + an HTTPS `url` without userinfo,
-  query parameters, or fragments. The transport is not inferred from `url`.
+  Streamable HTTP servers use `type: "http"` (or `"streamable-http"`) + an
+  HTTPS `url` (plain HTTP only for localhost / host.docker.internal).
+  Userinfo, fragments, and credential-looking query parameters are rejected;
+  other query parameters are fine. The transport is not inferred from `url`,
+  and unknown fields are rejected rather than dropped.
 - **No secrets.** `.mcp.json` carries launch config only; credentials are
   injected by the credentials proxy at request time. If an MCP server refuses
   to boot without an env var, use a placeholder value — never a real key.

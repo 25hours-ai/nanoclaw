@@ -11,7 +11,7 @@
  * install_packages: update DB + rebuild image + kill container + on_wake.
  * add_mcp_server: update DB + kill container + on_wake.
  */
-import { parseMcpServerConfig, type McpServerConfig } from '../../container-config.js';
+import { parseMcpServerConfig, validateMcpServerName, type McpServerConfig } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
@@ -106,6 +106,7 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
   }
   let serverConfig: McpServerConfig;
   try {
+    validateMcpServerName(name);
     serverConfig = parseMcpServerConfig(payload);
     // eslint-disable-next-line no-catch-all/no-catch-all -- approval payload validation must fail closed
   } catch (err) {
