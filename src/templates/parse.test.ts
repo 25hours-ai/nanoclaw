@@ -93,6 +93,16 @@ describe('parseTemplate', () => {
     expect(() => parseTemplate(dir)).toThrow(/Template MCP server "docs" is invalid:.*HTTPS/);
   });
 
+  it('rejects an MCP server name that fails the shared name validation', () => {
+    write(
+      '.mcp.json',
+      JSON.stringify({ mcpServers: { 'my.server': { type: 'http', url: 'https://mcp.example.com/mcp' } } }),
+    );
+    write('context/instructions.md', 'Be helpful.');
+
+    expect(() => parseTemplate(dir)).toThrow(/Template MCP server "my\.server" is invalid:.*1-64 characters/);
+  });
+
   it('accepts "streamable-http" (the MCP Registry spelling) as an alias for "http"', () => {
     write(
       '.mcp.json',

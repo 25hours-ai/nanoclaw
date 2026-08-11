@@ -329,4 +329,19 @@ describe('groups CLI MCP config', () => {
     expect(insecure.ok).toBe(false);
     expect(insecure.ok ? '' : insecure.error.message).toMatch(/HTTPS/);
   });
+
+  it('rejects a server name that fails the shared name validation', async () => {
+    const badName = await dispatch(
+      {
+        id: 'req-bad-name',
+        command: 'groups-config-add-mcp-server',
+        args: { id: 'ag-mcp', name: 'docs]\n[mcp_servers.evil]', url: 'https://mcp.example.com/mcp' },
+      },
+      { caller: 'host' },
+    );
+
+    expect(badName.ok).toBe(false);
+    expect(badName.ok ? '' : badName.error.message).toMatch(/1-64 characters/);
+    expect(JSON.parse(getContainerConfig('ag-mcp')!.mcp_servers)).toEqual({});
+  });
 });
