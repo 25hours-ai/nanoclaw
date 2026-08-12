@@ -32,11 +32,16 @@ export interface McpStdioServerConfig {
   env?: Record<string, string>;
   /**
    * Working directory in the Agent Plugins fixed forms (./p, ${PLUGIN_ROOT}[/p],
-   * ${PLUGIN_DATA}[/p]). Validated here, but no runtime consumes it: the Claude
-   * Agent SDK's stdio config takes no cwd, so the plugin reader skips
-   * declared-cwd servers instead of mis-launching them. No CLI flag or self-mod
-   * tool param exposes it; a raw payload that carries one is rendered on the
-   * approval card.
+   * ${PLUGIN_DATA}[/p]). For plugin servers the agent-runner (plugin-mcp.ts)
+   * resolves it to an absolute container path; providers consume it natively
+   * (codex) or via a launch shim (cwd-shim.ts). Without a pluginRoot there is
+   * nothing to resolve against, so the host strips it before container.json
+   * is materialized (sanitizeStoredMcpServers — the only layer that does;
+   * the runtime passes provenance-less servers through untouched). No CLI flag
+   * or self-mod tool param exposes it; raw payloads carrying one are rejected
+   * at intake (validateAddMcpServer), on original submission and approval
+   * replay alike, and sanitizeStoredMcpServers strips it from stored entries
+   * that lack plugin provenance.
    */
   cwd?: string;
   /**
@@ -48,9 +53,9 @@ export interface McpStdioServerConfig {
   pluginRoot?: string;
   /**
    * Name of the plugin that stamped this server. Ownership marker: plugin-owned
-   * servers reject CLI/self-mod edits and are swapped wholesale by
-   * `ncl groups restamp`. Internal — never CLI input, and not re-attached by
-   * sanitizeStoredMcpServers, so it never reaches container.json.
+   * servers reject CLI/self-mod edits and are swapped wholesale on restamp
+   * (`ncl groups create --template`). Internal — never CLI input, and not
+   * re-attached by sanitizeStoredMcpServers, so it never reaches container.json.
    */
   plugin?: string;
   instructions?: string;
@@ -101,7 +106,10 @@ export function mcpServerPluginOwner(entry: unknown): string | undefined {
 
 /** Throws unless `name` is a safe MCP server name (1-64 chars of [A-Za-z0-9_-]). */
 export function validateMcpServerName(name: string): void {
-  if (!MCP_SERVER_NAME_RE.test(name)) {
+  // "__proto__" passes the regex but assigning servers["__proto__"] sets the
+  // record's prototype instead of an own key — the server would be silently
+  // dropped (or worse) on every intake path, so reject it by name.
+  if (!MCP_SERVER_NAME_RE.test(name) || name === '__proto__') {
     throw new Error('server name must be 1-64 characters of letters, digits, "_" or "-"');
   }
 }
@@ -208,8 +216,14 @@ function parseCwd(value: unknown): string | undefined {
   if (typeof value !== 'string' || !CWD_FORM_RE.test(value)) {
     throw new Error('cwd must be ./path, ${PLUGIN_ROOT}[/path], or ${PLUGIN_DATA}[/path]');
   }
+  // rest === '' is the bare form (`${PLUGIN_DATA}`, `./`); empty segments in a
+  // non-empty rest are rejected for symmetry with the command validator.
   const rest = value.startsWith('./') ? value.slice(2) : value.replace(CWD_FORM_RE, '');
-  if (rest.includes('${') || rest.includes('\\') || rest.split('/').some((s) => s === '..')) {
+  if (
+    rest.includes('${') ||
+    rest.includes('\\') ||
+    (rest !== '' && rest.split('/').some((s) => s === '..' || s === ''))
+  ) {
     throw new Error('cwd escapes the plugin root');
   }
   return value;
@@ -275,6 +289,14 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
         pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)
       ) {
         server.pluginRoot = pluginRoot;
+      }
+      if (server.type !== 'http' && server.cwd && !server.pluginRoot) {
+        // cwd resolves against a plugin root; without provenance nothing can
+        // resolve it. This strip is the ONLY layer (the runtime passes
+        // provenance-less servers through untouched), and the breadcrumb
+        // lands in host logs instead of nowhere.
+        delete server.cwd;
+        log.warn('Stripping cwd from stored MCP server without plugin provenance', { group: groupName, server: name });
       }
       servers[name] = server;
       // eslint-disable-next-line no-catch-all/no-catch-all -- validation failures are data errors, not bugs

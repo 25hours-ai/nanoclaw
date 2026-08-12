@@ -16,9 +16,11 @@ import { assertValidGroupFolder, resolveGroupFolderPath } from '../group-folder.
 import { stageGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
 import { normalizeName } from '../modules/agent-to-agent/db/agent-destinations.js';
-import { createScheduledTask, prepareScheduledTask } from '../modules/scheduling/create.js';
+import { createScheduledTask } from '../modules/scheduling/create.js';
 import type { AgentGroup } from '../types.js';
 import { resolveLocalTemplate } from './local-dir.js';
+import { pluginDataCwdSubpaths } from './mcp.js';
+import { prepareTemplateTasks } from './tasks.js';
 import { parseTemplate } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
 
@@ -43,7 +45,10 @@ export function groupSkillsOverlayDir(agentGroupId: string): string {
  * Mark a template's servers as plugin-owned: the `plugin` ownership marker on
  * every server, plus the container-side `pluginRoot` on stdio servers so the
  * agent-runner can expand ${PLUGIN_ROOT}/${PLUGIN_DATA} and inject both env
- * vars. All values are container paths — a host path never leaks into config.
+ * vars. A stdio server that omits `cwd` gets `${PLUGIN_ROOT}` here — the spec
+ * default (§7.2.1: the plugin root MUST be the working directory) materialized
+ * once at stamp time so every provider's config writer sees an explicit value.
+ * All values are container paths — a host path never leaks into config.
  */
 export function markPluginServers(
   servers: Record<string, McpServerConfig>,
@@ -53,7 +58,9 @@ export function markPluginServers(
   return Object.fromEntries(
     Object.entries(servers).map(([serverName, server]) => [
       serverName,
-      server.type === 'http' ? { ...server, plugin: pluginName } : { ...server, plugin: pluginName, pluginRoot },
+      server.type === 'http'
+        ? { ...server, plugin: pluginName }
+        : { cwd: '${PLUGIN_ROOT}', ...server, plugin: pluginName, pluginRoot },
     ]),
   );
 }
@@ -87,20 +94,7 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   // config row below, BEFORE tasks are created, so a template task's first
   // run and its later re-arms agree on the same zone.
   const timezone = opts?.timezone && isValidTimezone(opts.timezone) ? opts.timezone : undefined;
-  const tasks = tpl.tasks.map((task) => {
-    try {
-      return prepareScheduledTask({
-        name: task.name,
-        prompt: task.prompt,
-        recurrence: task.schedule,
-        script: task.script,
-        timezone: timezone ?? TIMEZONE,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Invalid template task ${task.source}: ${message}`, { cause: err });
-    }
-  });
+  const tasks = prepareTemplateTasks(tpl.tasks, timezone ?? TIMEZONE);
 
   const id = randomUUID();
   // Display-name fallback chain: explicit option → manifest extension
@@ -142,6 +136,9 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
   // container; only plugin-data/ is writable, matching the spec's contract.
   copyPluginDir(dir, path.join(groupDir, 'plugins', tpl.name));
   fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name), { recursive: true });
+  for (const sub of pluginDataCwdSubpaths(tpl.mcpServers)) {
+    fs.mkdirSync(path.join(groupDir, 'plugin-data', tpl.name, sub), { recursive: true });
+  }
 
   updateContainerConfigJson(id, 'mcp_servers', markPluginServers(tpl.mcpServers, tpl.name));
 
@@ -154,7 +151,7 @@ export function createAgentFromTemplate(ref: string, opts?: CreateAgentOptions):
 
   // Template tasks require explicit activation. The later welcome flow can
   // present these exact paused tasks and resume only the ones the user accepts.
-  for (const task of tasks) createScheduledTask(id, task, { status: 'paused' });
+  for (const task of tasks.values()) createScheduledTask(id, task, { status: 'paused' });
 
   for (const line of tpl.report) log.warn('Template reader notice', { ref, notice: line });
 

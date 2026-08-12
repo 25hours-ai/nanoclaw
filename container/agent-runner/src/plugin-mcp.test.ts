@@ -51,4 +51,17 @@ describe('resolvePluginServer', () => {
     const http = { type: 'http' as const, url: 'https://mcp.example.com/mcp', headers: { A: 'placeholder' } };
     expect(resolvePluginServer(http)).toBe(http);
   });
+
+  it('resolves each cwd fixed form to an absolute path', () => {
+    expect(resolvePluginServer({ command: 'server', cwd: './work', pluginRoot: ROOT })).toMatchObject({
+      cwd: `${ROOT}/work`,
+    });
+    expect(resolvePluginServer({ command: 'server', cwd: '${PLUGIN_ROOT}/sub', pluginRoot: ROOT })).toMatchObject({
+      cwd: `${ROOT}/sub`,
+    });
+    expect(resolvePluginServer({ command: 'server', cwd: '${PLUGIN_DATA}', pluginRoot: ROOT })).toMatchObject({
+      cwd: DATA,
+    });
+  });
+
 });

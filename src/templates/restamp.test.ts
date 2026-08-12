@@ -184,7 +184,7 @@ describe('restampAgentFromTemplate', () => {
     };
     createAgentGroup(g);
     ensureContainerConfig(g.id);
-    expect(() => restampAgentFromTemplate('sales/sdr', g.id, { apply: false })).toThrow(/does not have plugin "sdr"/);
+    expect(() => restampAgentFromTemplate('sales/sdr', g.id, { apply: false })).toThrow(/does not carry plugin "sdr"/);
   });
 
   it('reports all-unchanged when the template did not change', () => {
@@ -192,6 +192,36 @@ describe('restampAgentFromTemplate', () => {
     const result = restampAgentFromTemplate('sales/sdr', g.id, { apply: true });
     expect(result.changes.every((c) => c.action === 'unchanged')).toBe(true);
     expect(result.note).toMatch(/Nothing to apply/);
+  });
+
+  it('treats an exec-bit-only template change as an update', () => {
+    // The copier preserves the executable bit, so a chmod-only revision must
+    // ship on restamp instead of comparing as byte-identical.
+    const g = stamp();
+    fs.chmodSync(path.join(TPL, 'plugin.json'), 0o755);
+    const result = restampAgentFromTemplate('sales/sdr', g.id, { apply: false });
+    expect(result.changes.find((c) => c.surface === 'plugin')?.action).toBe('update');
+  });
+
+  it('recreates a missing ${PLUGIN_DATA} cwd dir even when plugin files are unchanged', () => {
+    // The adoption path: same template ref, but the dir is absent (an older
+    // engine skipped cwd servers at stamp time, or the agent deleted it).
+    // plugin-data scaffold must heal without a plugin-file diff.
+    fs.writeFileSync(
+      path.join(TPL, 'mcp.json'),
+      JSON.stringify({
+        $schema: MCP_SCHEMA_URL,
+        mcpServers: { hubspot: { type: 'stdio', command: 'npx', cwd: '${PLUGIN_DATA}/state' } },
+      }),
+    );
+    const g = stamp();
+    const stateDir = path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr', 'state');
+    fs.rmSync(stateDir, { recursive: true });
+
+    const result = restampAgentFromTemplate('sales/sdr', g.id, { apply: true });
+
+    expect(result.changes.find((c) => c.surface === 'plugin')?.action).toBe('unchanged');
+    expect(fs.existsSync(stateDir)).toBe(true);
   });
 
   it('dry run reports every change but mutates nothing', () => {

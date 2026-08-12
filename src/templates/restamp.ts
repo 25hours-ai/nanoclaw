@@ -19,26 +19,23 @@ import fs from 'fs';
 import path from 'path';
 
 import { mcpServerPluginOwner, resolveGroupTimezone, type McpServerConfig } from '../container-config.js';
-import { getAgentGroup } from '../db/agent-groups.js';
+import { getAgentGroup, getAllAgentGroups } from '../db/agent-groups.js';
 import { getContainerConfig, updateContainerConfigJson } from '../db/container-configs.js';
 import { findTaskSessions } from '../db/sessions.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { PERSONA_PREPEND_FILE, readGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
-import {
-  createScheduledTask,
-  prepareScheduledTask,
-  taskNameSlug,
-  type PreparedScheduledTask,
-} from '../modules/scheduling/create.js';
-import { deleteTask, updateTask } from '../modules/scheduling/db.js';
+import { createScheduledTask, taskNameSlug } from '../modules/scheduling/create.js';
+import { deleteTask, parseTaskContent, updateTask } from '../modules/scheduling/db.js';
 import { inboundDbPath, withInboundDb } from '../session-manager.js';
 import type { AgentGroup } from '../types.js';
 import { groupSkillsOverlayDir, markPluginServers } from './create-agent.js';
 import { resolveLocalTemplate } from './local-dir.js';
-import { PLUGIN_MANIFEST_FILE } from './manifest.js';
+import { parsePluginManifest, PLUGIN_MANIFEST_FILE } from './manifest.js';
+import { pluginDataCwdSubpaths } from './mcp.js';
 import { parseTemplate, type Template } from './parse.js';
 import { copyPluginDir } from './plugin-dir.js';
+import { prepareTemplateTasks } from './tasks.js';
 
 export interface RestampChange {
   surface: 'plugin' | 'persona' | 'context' | 'skill' | 'mcp-server' | 'task';
@@ -60,6 +57,29 @@ export interface RestampResult {
 }
 
 /**
+ * Agent groups that carry this template's plugin — a stamped manifest on disk
+ * is the marker. `ncl groups create --template` uses this to decide between
+ * stamping a fresh agent and updating the one already stamped. Reads only the
+ * manifest (the full walk/caps/lint pass runs in the stamp it gates, not in
+ * this probe).
+ */
+export function groupsCarryingPlugin(ref: string): AgentGroup[] {
+  const dir = resolveLocalTemplate(ref);
+  const manifestPath = path.join(dir, PLUGIN_MANIFEST_FILE);
+  // The fast path reads ONLY a regular manifest file. Anything else — absent
+  // (pre-plugin layout), or a symlink — goes through the full parse so the
+  // reader's own errors surface (the migration pointer, symlink rejection)
+  // instead of a raw ENOENT or a followed link.
+  if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) {
+    parseTemplate(dir);
+  }
+  const manifest = parsePluginManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf-8')));
+  return getAllAgentGroups().filter((g) =>
+    fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', manifest.name, PLUGIN_MANIFEST_FILE)),
+  );
+}
+
+/**
  * Plan (and with `apply: true` execute) an in-place plugin update. Throws
  * before any mutation when the group is missing, the group doesn't carry this
  * plugin, either plugin copy fails validation, or a template task is invalid.
@@ -75,8 +95,8 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
   const oldPluginDir = path.join(groupDir, 'plugins', tpl.name);
   if (!fs.existsSync(path.join(oldPluginDir, PLUGIN_MANIFEST_FILE))) {
     throw new Error(
-      `Group "${group.name}" does not have plugin "${tpl.name}" stamped; ` +
-        'use `ncl groups create --template` to stamp a new agent instead',
+      `Group "${group.name}" does not carry plugin "${tpl.name}" — ` +
+        'check the group id, or drop --id to stamp a new agent',
     );
   }
   let old: Template;
@@ -87,43 +107,13 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
     throw new Error(`Cannot read the previously stamped plugin at plugins/${tpl.name}: ${message}`, { cause: err });
   }
 
-  // Task ids embed a truncated name slug; two names colliding on it would
-  // silently fight over one live series, so refuse the template up front.
-  const taskSlugs = new Map<string, string>();
-  for (const task of tpl.tasks) {
-    const slug = taskNameSlug(task.name);
-    if (!slug) {
-      throw new Error(`Template task ${task.source}: name "${task.name}" produces an empty id slug; rename it`);
-    }
-    const clash = taskSlugs.get(slug);
-    if (clash !== undefined) {
-      throw new Error(`Template tasks "${clash}" and "${task.name}" collide on id slug "${slug}"; rename one`);
-    }
-    taskSlugs.set(slug, task.name);
-  }
-
-  // All template tasks are validated up front so nothing below can half-apply
-  // over an invalid task file (mirrors createAgentFromTemplate).
-  const tz = resolveGroupTimezone(group.id);
-  const preparedTasks = new Map<string, PreparedScheduledTask>(
-    tpl.tasks.map((task) => {
-      try {
-        return [
-          task.name,
-          prepareScheduledTask({
-            name: task.name,
-            prompt: task.prompt,
-            recurrence: task.schedule,
-            script: task.script,
-            timezone: tz,
-          }),
-        ];
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`Invalid template task ${task.source}: ${message}`, { cause: err });
-      }
-    }),
-  );
+  // All template tasks are validated and prepared up front (slug uniqueness
+  // included — the shared gate with createAgentFromTemplate) so nothing below
+  // can half-apply over an invalid task file. NEW-side only: the old parsed
+  // copy is tolerated as-is, so an already-stamped bad template stays
+  // restampable to a fixed version.
+  const preparedTasks = prepareTemplateTasks(tpl.tasks, resolveGroupTimezone(group.id));
+  const newTaskSlugs = new Set(tpl.tasks.map((task) => taskNameSlug(task.name)));
 
   const changes: RestampChange[] = [];
   const ops: Array<() => void> = [];
@@ -145,6 +135,17 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
       mkdirRealWithin(groupDir, path.join(groupDir, 'plugin-data', tpl.name));
     });
   }
+
+  // cwd dirs are plugin-data scaffold, not plugin files: create them even
+  // when plugins/<name> is byte-identical. An engine upgrade changes what the
+  // same template ref stamps (a cwd server the old engine skipped appears on
+  // restamp with no plugin-file diff), and the dir may also have been deleted
+  // since the last stamp. Idempotent; mkdirRealWithin creates parents.
+  ops.push(() => {
+    for (const sub of pluginDataCwdSubpaths(tpl.mcpServers)) {
+      mkdirRealWithin(groupDir, path.join(groupDir, 'plugin-data', tpl.name, sub));
+    }
+  });
 
   // --- persona -------------------------------------------------------------
   const livePersona = readGroupPersona(groupDir);
@@ -383,7 +384,7 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
     });
   }
   for (const [slug, oldTask] of oldTasks) {
-    if (taskSlugs.has(slug)) continue;
+    if (newTaskSlugs.has(slug)) continue;
     const match = findTaskSeriesBySlug(group.id, slug);
     // Nothing to remove when the series is already dead history.
     if (match === undefined || (!match.live && match.recurrence === null)) continue;
@@ -400,7 +401,21 @@ export function restampAgentFromTemplate(ref: string, agentGroupId: string, opts
 
   for (const line of tpl.report) log.warn('Template reader notice', { ref, notice: line });
 
-  if (opts.apply) for (const op of ops) op();
+  // Ops are independent and idempotent; a mid-list throw names how far it
+  // got so the operator knows a re-run converges the rest.
+  if (opts.apply) {
+    for (const [index, op] of ops.entries()) {
+      try {
+        op();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Restamp failed after applying ${index} of ${ops.length} changes (re-run to converge the rest): ${message}`,
+          { cause: err },
+        );
+      }
+    }
+  }
 
   const anyChange = changes.some((c) => c.action !== 'unchanged' && c.action !== 'skip');
   const note = opts.apply
@@ -466,7 +481,11 @@ function mkdirRealWithin(base: string, dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-/** Byte-equality of two directory trees (relative layout + file contents). */
+/**
+ * Equality of two directory trees: relative layout, file contents, and the
+ * executable bit (the copier preserves it, so a chmod-only template revision
+ * must read as a change, not "unchanged").
+ */
 function dirsEqual(a: string, b: string): boolean {
   const filesA = listFilesRecursive(a);
   const filesB = listFilesRecursive(b);
@@ -474,6 +493,7 @@ function dirsEqual(a: string, b: string): boolean {
   for (const [rel, absA] of filesA) {
     const absB = filesB.get(rel);
     if (absB === undefined) return false;
+    if ((fs.lstatSync(absA).mode & 0o111) !== (fs.lstatSync(absB).mode & 0o111)) return false;
     if (!fs.readFileSync(absA).equals(fs.readFileSync(absB))) return false;
   }
   return true;
@@ -514,24 +534,15 @@ function findTaskSeriesBySlug(agentGroupId: string, slug: string): TaskSeriesMat
         .get(pattern),
     ) as { series_id: string; status: string; recurrence: string | null; content: string } | undefined;
     if (!row) continue;
-    let prompt = '';
-    let script: string | null = null;
-    try {
-      const parsed = JSON.parse(row.content) as Record<string, unknown>;
-      prompt = typeof parsed.prompt === 'string' ? parsed.prompt : '';
-      script = typeof parsed.script === 'string' ? parsed.script : null;
-      // eslint-disable-next-line no-catch-all/no-catch-all -- LEGACY-COMPAT(v1-tasks): plain-string content predating the JSON envelope
-    } catch {
-      prompt = row.content;
-    }
+    const content = parseTaskContent(row.content);
     return {
       sessionId: session.id,
       seriesId: row.series_id,
       live: row.status === 'pending' || row.status === 'paused',
       status: row.status,
       recurrence: row.recurrence,
-      prompt,
-      script,
+      prompt: content.prompt,
+      script: content.script,
     };
   }
   return undefined;

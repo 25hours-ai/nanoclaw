@@ -165,6 +165,8 @@ describe('parseMcpServerConfig', () => {
     ['./a/../b', /escapes the plugin root/],
     ['${PLUGIN_ROOT}/../up', /escapes the plugin root/],
     ['${PLUGIN_DATA}/a/${PLUGIN_ROOT}', /escapes the plugin root/],
+    ['${PLUGIN_DATA}//x', /escapes the plugin root/],
+    ['./a//b', /escapes the plugin root/],
     [7, /cwd must be/],
   ])('rejects cwd %s', (cwd, message) => {
     expect(() => parseMcpServerConfig({ command: 'server', cwd })).toThrow(message);
@@ -189,6 +191,18 @@ describe('sanitizeStoredMcpServers', () => {
     expect(sanitized.badRoot).not.toHaveProperty('pluginRoot');
   });
 
+  it('strips cwd from entries without plugin provenance, keeps it with', () => {
+    const sanitized = sanitizeStoredMcpServers(
+      {
+        planted: { command: 'server', cwd: '${PLUGIN_DATA}/x' },
+        plugin: { command: 'server', cwd: '${PLUGIN_DATA}/x', pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` },
+      },
+      'test-group',
+    );
+    expect(sanitized.planted).not.toHaveProperty('cwd');
+    expect(sanitized.plugin).toMatchObject({ cwd: '${PLUGIN_DATA}/x' });
+  });
+
   it('returns empty on a non-object blob', () => {
     expect(sanitizeStoredMcpServers('garbage', 'test-group')).toEqual({});
   });
@@ -197,7 +211,9 @@ describe('sanitizeStoredMcpServers', () => {
 describe('validateMcpServerName', () => {
   it('accepts bare-key-safe names and rejects structural or oversized ones', () => {
     expect(() => validateMcpServerName('brave-search_2')).not.toThrow();
-    for (const name of ['', 'docs]\n[mcp_servers.evil]', 'a b', 'a.b', '"quoted"', 'x'.repeat(65)]) {
+    // __proto__ matches the regex but would set the record's prototype
+    // instead of an own key on assignment — rejected by name.
+    for (const name of ['', 'docs]\n[mcp_servers.evil]', 'a b', 'a.b', '"quoted"', 'x'.repeat(65), '__proto__']) {
       expect(() => validateMcpServerName(name)).toThrow(/1-64 characters/);
     }
   });

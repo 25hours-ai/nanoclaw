@@ -44,7 +44,8 @@ function writeTemplate(manifestExtras: Record<string, unknown> = {}): void {
     JSON.stringify({
       $schema: MCP_SCHEMA_URL,
       mcpServers: {
-        hubspot: { type: 'stdio', command: 'npx', args: ['-y', '@hubspot/mcp-server'] },
+        hubspot: { type: 'stdio', command: 'npx', args: ['-y', '@hubspot/mcp-server'], cwd: '${PLUGIN_DATA}/state' },
+        search: { type: 'stdio', command: './bin/search' },
         docs: { type: 'streamable-http', url: 'https://mcp.example.com/mcp' },
       },
     }),
@@ -108,6 +109,9 @@ describe('createAgentFromTemplate', () => {
     expect(fs.existsSync(path.join(pluginDir, 'plugin.json'))).toBe(true);
     expect(fs.existsSync(path.join(pluginDir, 'skills', 'widget', 'SKILL.md'))).toBe(true);
     expect(fs.existsSync(path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr'))).toBe(true);
+    // hubspot declares cwd ${PLUGIN_DATA}/state: the stamp pre-creates it so
+    // the server's first launch doesn't die on a missing directory.
+    expect(fs.existsSync(path.join(GROUPS_DIR, g.folder, 'plugin-data', 'sdr', 'state'))).toBe(true);
   });
 
   it('records the ownership marker on every server and pluginRoot on stdio only', () => {
@@ -116,6 +120,19 @@ describe('createAgentFromTemplate', () => {
     const servers = JSON.parse(getContainerConfig(g.id)!.mcp_servers);
     expect(servers.hubspot).toMatchObject({ command: 'npx', pluginRoot: '/workspace/agent/plugins/sdr' });
     expect(servers.docs).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', plugin: 'sdr' });
+    // Declared cwd wins; an omitted one defaults to the plugin root (spec §7.2.1).
+    expect(servers.hubspot.cwd).toBe('${PLUGIN_DATA}/state');
+    expect(servers.search.cwd).toBe('${PLUGIN_ROOT}');
+  });
+
+  it('refuses a template whose task names collide on the truncated id slug', () => {
+    // Both names slug to the same 24-char prefix; the collision must surface
+    // at first stamp, not on the first later restamp.
+    writeTask('a'.repeat(30), '0 9 * * *', 'First.');
+    writeTask(`${'a'.repeat(30)}b`, '0 9 * * *', 'Second.');
+
+    expect(() => createAgentFromTemplate('sales/sdr', { name: 'SDR Collide' })).toThrow(/collide on id slug/);
+    expect(getAllAgentGroups()).toHaveLength(0);
   });
 
   it('writes context extras at their template-relative paths', () => {

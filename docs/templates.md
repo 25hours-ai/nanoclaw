@@ -133,6 +133,8 @@ stdio MCP servers declared by a plugin run against that contract:
 - A `./`-relative `command` resolves against the plugin root, so a
   plugin-shipped server binary runs from the read-only copy inside the
   container — never on the host.
+- A stdio server that omits `cwd` runs with the plugin root as its working
+  directory (the spec default).
 
 Because the whole plugin is present, a skill can reference sibling plugin
 files (say, a `TROUBLESHOOTING.md` at the plugin root) and they exist in the
@@ -140,14 +142,19 @@ container.
 
 ## Updating a stamped agent
 
-`ncl groups create --template` always creates a new agent. To deliver a
-template update to an agent that already exists, restamp it in place:
+`ncl groups create --template` stamps a new agent only when no group carries
+the plugin yet. When one already does, the same command becomes an in-place
+update of that agent (a "restamp"):
 
 ```bash
-ncl groups restamp --id <group-id> --template <ref>        # dry run: show the plan
-ncl groups restamp --id <group-id> --template <ref> --yes  # apply it
-ncl groups restart --id <group-id>                         # skill/MCP changes take effect
+ncl groups create --template <ref>          # dry run: show the update plan
+ncl groups create --template <ref> --yes    # apply it
+ncl groups restart --id <group-id>          # skill/MCP changes take effect
 ```
+
+With several groups stamped from the same plugin, pass `--id <group-id>` to
+pick the one to update. To deliberately stamp a second agent from a plugin
+that is already in use, pass `--new`.
 
 The plugin (including its `ai.nanoco.nanoclaw` extension) is the **source of
 truth** for everything it stamps. Restamping resets those surfaces to the new
@@ -272,8 +279,8 @@ Pricing rules live in `additional_context/pricing.md`. Read it before quoting a 
 ```
 
 Context files are copied when you stamp, so files added to the template later
-won't reach an already-created agent automatically. Deliver them with
-`ncl groups restamp` (see [Updating a stamped agent](#updating-a-stamped-agent)).
+won't reach an already-created agent automatically. Deliver them by restamping
+(see [Updating a stamped agent](#updating-a-stamped-agent)).
 
 ## MCP servers and credentials
 
@@ -308,9 +315,13 @@ authentication belongs in the credentials proxy. Non-secret query parameters
 container's host machine are rejected, and plain HTTP is allowed only for
 loopback hosts (`localhost`, `127.0.0.1`, `[::1]`). A stdio `command` is a
 single token: a bare executable name or a `./`-relative path resolved against
-the plugin root. An explicit `cwd` is validated against the spec's fixed
-forms but currently skipped with a notice (the provider runtime does not
-support it).
+the plugin root. An explicit `cwd` uses the spec's fixed forms (`./path`,
+`${PLUGIN_ROOT}[/path]`, `${PLUGIN_DATA}[/path]`; no `..` escapes) and is
+resolved to an absolute container path at runtime, so the server really
+starts there: codex sets it natively, and providers whose runtime cannot
+(claude, opencode) launch through a `cd`-then-`exec` shim. A `${PLUGIN_DATA}`
+subdirectory named as `cwd` is created at stamp time; `./`/`${PLUGIN_ROOT}`
+directories must exist in the shipped plugin.
 
 Credentials are held by the **credentials proxy** and injected into outbound
 HTTPS calls at the proxy boundary, matched by API host, at request time. The key
