@@ -162,13 +162,26 @@ jobs:
             "$REF" > /dev/null
           echo "  signature verified for $REF"
 
+      # Minted per run, never stored. A GitHub App installation token lives one
+      # hour, so a token pasted into a repository secret would approve once and
+      # then fail quietly for good — the failure mode being "no approval", which
+      # looks identical to "not armed yet". The App id and key are what is held.
+      - name: Mint the approver token
+        id: approver
+        if: steps.sig.outcome == 'success'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.AGENT_IMAGE_APPROVER_APP_ID }}
+          private-key: ${{ secrets.AGENT_IMAGE_APPROVER_PRIVATE_KEY }}
+
       - name: Approve
         if: steps.sig.outcome == 'success'
         env:
           # The App, not GITHUB_TOKEN: the pull request is opened by
           # github-actions[bot], and GitHub refuses a review from the identity
           # that authored it. Two identities is what makes this a review at all.
-          GH_TOKEN: ${{ secrets.AGENT_IMAGE_APPROVER_TOKEN }}
+          GH_TOKEN: ${{ steps.approver.outputs.token }}
           PR: ${{ steps.pr.outputs.number }}
           ARMED: ${{ vars.AGENT_IMAGE_AUTO_APPROVE }}
           REF: ${{ steps.pin.outputs.ref }}
@@ -194,7 +207,9 @@ jobs:
             exit 0
           fi
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::notice::Armed, but AGENT_IMAGE_APPROVER_TOKEN is unset — a human reviews."
+            echo "::notice::Armed, but no approver token could be minted — a human reviews."
+            echo "Check AGENT_IMAGE_APPROVER_APP_ID / _PRIVATE_KEY, and that the App"
+            echo "has pull_requests: write and is installed on this repository."
             exit 0
           fi
           gh pr review "$PR" --repo "${{ github.repository }}" --approve --body "$BODY"
