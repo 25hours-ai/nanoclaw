@@ -219,23 +219,18 @@ jobs:
             --certificate-oidc-issuer "$ISSUER" \
             "${SIG_REPO}@${DIGEST}" > /dev/null
 
-          # Attestations attach per architecture, not to the index, so each
-          # child has to be named by its own digest. Verifying only the index
-          # would silently pass without ever checking an SBOM.
-          for CHILD in $(python3 -c "
-          import json
-          m = json.load(open('/tmp/manifest.json'))
-          for e in m.get('manifests', []):
-              p = e.get('platform', {})
-              if p.get('architecture') not in (None, 'unknown'):
-                  print(e['digest'])
-          "); do
-            echo "Verifying SBOM attestation for ${CHILD}"
-            cosign verify-attestation --type spdx \
-              --certificate-identity "$IDENTITY" \
-              --certificate-oidc-issuer "$ISSUER" \
-              "${SIG_REPO}@${CHILD}" > /dev/null
-          done
+          # Deliberately no attestation check. The publisher does not attach
+          # them: `.att` and `.sbom` are both absent upstream, and that is a
+          # considered choice on their side — BuildKit provenance embeds build
+          # environment detail they do not want redistributed. Verifying an SBOM
+          # that is never published would fail every run and hold this gate
+          # permanently off, which reads as "signature broken" rather than
+          # "attestations not offered".
+          #
+          # If that changes, the check belongs here and must name each CHILD
+          # digest from /tmp/manifest.json rather than the index: attestations
+          # attach per architecture, so verifying the index alone would pass
+          # without ever having looked at an SBOM.
 
       - name: Enable auto-merge
         if: steps.pin.outputs.changed == 'true' && steps.sig.outcome == 'success'
