@@ -138,8 +138,11 @@ export interface ChannelContextDefaults {
   /**
    * unknown_sender_policy stamped on messaging_groups rows auto-created by
    * the router or created by wizard/CLI paths in this context.
+   * 'decline_notify' (DM-shaped channels): the host politely declines the
+   * unknown sender in-channel and sends the owner a one-line FYI — no
+   * approval card; access grants stay explicit (`ncl members add`).
    */
-  unknownSenderPolicy: 'strict' | 'request_approval' | 'public';
+  unknownSenderPolicy: 'strict' | 'request_approval' | 'decline_notify' | 'public';
 }
 
 /**
