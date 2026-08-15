@@ -271,6 +271,39 @@ function dispatchMembership(event: MembershipEvent): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Inbound policy registration
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap of the host's `ChannelSetup`, applied at bridge setup time. Every
+ * inbound dispatch path (onSubscribedMessage / onNewMention / onDirectMessage
+ * / onNewMessage) funnels through the stored setup's `onInbound`, so a policy
+ * that wraps `onInbound` intercepts them all at a single point — e.g. to
+ * drop, re-attribute, or rate-limit bot-authored messages before routing.
+ *
+ * `instanceKey` is the bridge's registry key (`config.instance ??
+ * adapter.name`): the wrap runs once per bridge instance, so policy state
+ * captured in the returned closure is naturally per-instance (= per bot
+ * identity when several bridges share one platform).
+ */
+export type BridgeInboundPolicy = (setup: ChannelSetup, instanceKey: string) => ChannelSetup;
+
+const bridgeInboundPolicies = new Map<string, BridgeInboundPolicy>();
+
+/**
+ * Register THE inbound policy for a channel type (single registration — the
+ * owning module registers on barrel import; a second registration overwrites
+ * with a warning, mirroring the router's hook discipline). Bridges whose
+ * channel type has no registered policy are unaffected.
+ */
+export function registerBridgeInboundPolicy(channelType: string, wrap: BridgeInboundPolicy): void {
+  if (bridgeInboundPolicies.has(channelType)) {
+    log.warn('Bridge inbound policy overwritten', { channelType });
+  }
+  bridgeInboundPolicies.set(channelType, wrap);
+}
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   /**
@@ -483,7 +516,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
     defaults: config.defaults,
 
     async setup(hostConfig: ChannelSetup) {
-      setupConfig = hostConfig;
+      // Apply the registered inbound policy (if any) for this channel type.
+      // Wrapping here — the single point every dispatch path reads back
+      // through — means one policy covers onSubscribedMessage, onNewMention,
+      // onDirectMessage and onNewMessage alike.
+      const inboundPolicy = bridgeInboundPolicies.get(adapter.name);
+      setupConfig = inboundPolicy ? inboundPolicy(hostConfig, instanceKey) : hostConfig;
 
       // State namespace: ONLY for a named non-default instance. A skill
       // that explicitly names the primary instance after the platform
