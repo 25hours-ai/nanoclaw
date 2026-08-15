@@ -19,7 +19,11 @@ import {
 import { appendRunLog } from './modules/scheduling/run-log.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroup, getMessagingGroupByPlatform } from './db/messaging-groups.js';
+import {
+  getMessagingGroup,
+  getMessagingGroupByPlatform,
+  getMessagingGroupForOwnDestination,
+} from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -346,12 +350,16 @@ async function deliverMessage(
     // targets the session's own chat address, the origin row wins even if
     // sibling instances share the same (channel_type, platform_id) — so the
     // reply goes out through the instance the message came in on. Otherwise
-    // fall back to the by-platform lookup (default-instance-first).
+    // prefer the sender's own destination-mapped instance (correct even when
+    // sibling instances share the same channel address), falling back to the
+    // by-platform lookup (default-instance-first) when the sender has no
+    // matching destination.
     const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
     const mg =
       originMg && originMg.channel_type === msg.channel_type && originMg.platform_id === msg.platform_id
         ? originMg
-        : getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
+        : (getMessagingGroupForOwnDestination(session.agent_group_id, msg.channel_type, msg.platform_id) ??
+          getMessagingGroupByPlatform(msg.channel_type, msg.platform_id));
     if (!mg) {
       throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
     }

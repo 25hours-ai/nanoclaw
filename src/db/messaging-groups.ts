@@ -62,6 +62,42 @@ export function getMessagingGroupByPlatform(
 }
 
 /**
+ * Instance-exact messaging group for a channel a given agent group is
+ * sending to, resolved through THAT agent's own `agent_destinations` entry
+ * rather than by platform address alone.
+ *
+ * Needed because `getMessagingGroupByPlatform`'s no-instance fallback picks
+ * one row deterministically (default instance, else lexically-first named
+ * instance) when several sibling-instance rows share one `(channel_type,
+ * platform_id)` pair — i.e. multiple adapter instances sharing one channel
+ * address, each owning its own row for the same physical channel. That pick
+ * is arbitrary with respect to who's actually sending: it need not be the
+ * row the sending agent is wired to, which silently breaks both destination
+ * authorization (`src/delivery.ts`) and any per-instance state on the
+ * resolved row (e.g. the `instance` used to pick the delivering adapter).
+ * Every caller resolving a non-origin-chat send should prefer this over the
+ * platform-only lookup, falling back to it only when the sender has no
+ * matching destination (e.g. the agent-to-agent module isn't installed).
+ */
+export function getMessagingGroupForOwnDestination(
+  agentGroupId: string,
+  channelType: string,
+  platformId: string,
+): MessagingGroup | undefined {
+  if (!hasTable(getDb(), 'agent_destinations')) return undefined;
+  return getDb()
+    .prepare(
+      `SELECT mg.* FROM agent_destinations ad
+         JOIN messaging_groups mg ON mg.id = ad.target_id
+        WHERE ad.agent_group_id = ? AND ad.target_type = 'channel'
+          AND mg.channel_type = ? AND mg.platform_id = ?
+     ORDER BY ad.created_at ASC
+        LIMIT 1`,
+    )
+    .get(agentGroupId, channelType, platformId) as MessagingGroup | undefined;
+}
+
+/**
  * Combined lookup for the router's fast-drop path. Returns the messaging
  * group (if it exists) and a count of wired agents in one query — lets
  * `routeInbound` short-circuit messages for unwired / unknown channels
