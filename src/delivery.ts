@@ -33,6 +33,7 @@ import {
 } from './db/session-db.js';
 import { runGuarded, type DeliveryGuardSpec, type GuardedDeliveryHandler } from './delivery-guard.js';
 import { isUnguarded, type Unguarded } from './guard/index.js';
+import { fanOutboundMessage } from './modules/cross-session-context/index.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
@@ -241,6 +242,13 @@ async function drainSession(session: Session): Promise<void> {
         // shouldn't get a gap in their typing indicator for them.
         if (msg.kind !== 'system' && msg.channel_type !== 'agent') {
           pauseTypingRefreshAfterDelivery(session.id);
+          // Cross-session context: fan the agent's own user-facing
+          // message into sibling sessions. task_log rows are series
+          // bookkeeping (one-door delivery), not user-facing — excluded.
+          // Runs after markDelivered so a delivery retry never double-fans.
+          if (msg.kind !== 'task_log') {
+            fanOutboundMessage(msg, session, agentGroup);
+          }
         }
       } catch (err) {
         const attempts = (deliveryAttempts.get(msg.id) ?? 0) + 1;

@@ -1,3 +1,4 @@
+import { HISTORY_DEFAULT_LIMIT, sessionHistory } from '../../modules/cross-session-context/index.js';
 import { registerResource } from '../crud.js';
 
 registerResource({
@@ -43,4 +44,28 @@ registerResource({
     { name: 'created_at', type: 'string', description: 'Auto-set.', generated: true },
   ],
   operations: { list: 'open', get: 'open' },
+  customOperations: {
+    history: {
+      access: 'open',
+      description:
+        'Read a session transcript: inbound + outbound messages merged chronologically.\n\n' +
+        'Output: pipe-separated lines "timestamp|direction(in/out)|kind|sender|text" (text capped at ' +
+        '200 chars), the newest --limit rows in chronological order. Use after `ncl sessions list` to ' +
+        'catch up fully on another conversation of your agent group (you only ever see your own ' +
+        "group's sessions).",
+      examples: [`# Catch up on another session of your group:\nncl sessions history sess-1751234-abc123 --limit 100`],
+      args: [
+        { name: 'id', type: 'string', description: 'Session id (from `ncl sessions list`).', required: true },
+        {
+          name: 'limit',
+          type: 'number',
+          description: `Max rows returned, newest first (default ${HISTORY_DEFAULT_LIMIT}).`,
+          default: HISTORY_DEFAULT_LIMIT,
+        },
+      ],
+      // Self-scoped in the handler: custom ops bypass the dispatcher's generic
+      // scope post-filter, so cross-group callers get "session not found".
+      handler: async (args, ctx) => sessionHistory(args, ctx),
+    },
+  },
 });

@@ -21,6 +21,7 @@ import {
   categorizeMessage,
   isClearCommand,
   isRunnerCommand,
+  isSessionEcho,
   stripInternalTags,
   type RoutingContext,
 } from './formatter.js';
@@ -181,7 +182,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         commandIds.push(msg.id);
         continue;
       }
-      if ((msg.kind === 'chat' || msg.kind === 'chat-sdk') && isUploadTraceCommand(msg)) {
+      // isSessionEcho guard: a copied "/upload-trace" from another session is
+      // ambient context, never a runner command (isClearCommand self-guards).
+      if ((msg.kind === 'chat' || msg.kind === 'chat-sdk') && !isSessionEcho(msg) && isUploadTraceCommand(msg)) {
         log('Uploading session trace to Hugging Face');
         writeMessageOut({
           id: generateId(),
