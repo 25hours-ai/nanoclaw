@@ -363,6 +363,15 @@ async function deliverMessage(
     if (!mg) {
       throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
     }
+    if (mg.detached_at) {
+      // The bot was removed from this conversation (a channel membership
+      // module stamps detached_at when the bot leaves). Fail into the retry
+      // path rather than sending into a channel that will reject us; rejoin
+      // clears the stamp.
+      throw new Error(
+        `messaging group ${mg.id} is detached (bot removed from ${mg.channel_type}/${mg.platform_id} at ${mg.detached_at})`,
+      );
+    }
     const isOriginChat = session.messaging_group_id === mg.id;
     // Guarded: without the agent-to-agent module, `agent_destinations`
     // doesn't exist and we permit all non-origin channel sends (the

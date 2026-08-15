@@ -188,6 +188,26 @@ export function setMessagingGroupDeniedAt(id: string, deniedAt: string | null): 
   getDb().prepare('UPDATE messaging_groups SET denied_at = ? WHERE id = ?').run(deniedAt, id);
 }
 
+/**
+ * Mark a messaging group as detached — our own bot left the platform channel
+ * this row maps to (written by a channel membership module, migration 022).
+ * The wiring, sessions, and destinations all survive detachment;
+ * delivery/typing should skip the row until the bot rejoins. Passing null
+ * clears the flag (rejoin), restoring the room with zero re-setup.
+ */
+export function setMessagingGroupDetachedAt(id: string, detachedAt: string | null): void {
+  getDb().prepare('UPDATE messaging_groups SET detached_at = ? WHERE id = ?').run(detachedAt, id);
+}
+
+/** True when the bot has left this conversation (detached_at set). The check
+ *  delivery-side callers should consult before attempting a send. */
+export function isMessagingGroupDetached(id: string): boolean {
+  const row = getDb().prepare('SELECT detached_at FROM messaging_groups WHERE id = ?').get(id) as
+    | { detached_at: string | null }
+    | undefined;
+  return typeof row?.detached_at === 'string' && row.detached_at.length > 0;
+}
+
 // ── Messaging Group Agents ──
 
 /**
