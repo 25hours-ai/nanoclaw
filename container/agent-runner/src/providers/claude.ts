@@ -580,6 +580,20 @@ export class ClaudeProvider implements AgentProvider {
 
         if (message.type === 'system' && message.subtype === 'init') {
           yield { type: 'init', continuation: message.session_id };
+        } else if (message.type === 'assistant') {
+          // Surface every assistant text block as it streams in. The final
+          // `result` event only carries the LAST assistant text — a wrapped
+          // <message> block composed between tool calls would otherwise be
+          // invisible to the poll-loop and silently lost.
+          const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message
+            ?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'text' && block.text) {
+                yield { type: 'text', text: block.text };
+              }
+            }
+          }
         } else if (message.type === 'result') {
           // `result` text exists only on subtype:"success"; error subtypes
           // (e.g. a non-retryable 403 billing_error) carry their message in

@@ -146,6 +146,15 @@ export type ProviderEvent =
    * dropping it as un-wrapped scratchpad, and to skip the re-wrap nudge.
    */
   | { type: 'result'; text: string | null; isError?: boolean }
+  /**
+   * An assistant text segment emitted mid-turn (e.g. between tool calls).
+   * The SDK's final `result` carries only the LAST assistant text, so a
+   * complete <message to="..."> block composed before a trailing tool call
+   * never reaches the result event. The poll-loop scans these segments for
+   * closed message blocks and delivers them as they are emitted (chat runs
+   * only), deduping the echo if the block reappears in the final result.
+   */
+  | { type: 'text'; text: string }
   | { type: 'error'; message: string; retryable: boolean; classification?: string }
   | { type: 'progress'; message: string }
   /**

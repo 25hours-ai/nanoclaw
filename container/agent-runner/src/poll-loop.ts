@@ -24,6 +24,7 @@ import {
   stripInternalTags,
   type RoutingContext,
 } from './formatter.js';
+import { stripHarnessTagArtifacts } from './harness-tag-strip.js';
 import { isUploadTraceCommand, uploadTrace } from './upload-trace.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from './providers/types.js';
 
@@ -365,6 +366,16 @@ export async function processQuery(
   // Once-per-turn guard for the task-run "<message> block was not delivered"
   // nudge — mirrors unwrappedNudged for chat turns.
   let taskBlockNudged = false;
+  // Mid-turn delivery bookkeeping (chat runs): (to, body) keys of <message>
+  // blocks already delivered from 'text' events this turn, plus how many.
+  // Lets the result path drop the echo when the model repeats a block in its
+  // final text, and suppresses the unwrapped-nudge when the wrapped reply was
+  // already sent mid-turn. Reset at the turn boundary (the 'result' event) —
+  // NOT at the follow-up push seam: query.push() does not end the in-flight
+  // turn, and its result (which may echo a mid-turn delivery) arrives after
+  // the push, so clearing there would double-deliver.
+  const midTurnDelivered = new Set<string>();
+  let midTurnSent = 0;
   // Prompt queue for the exchange hook — each result event consumes the
   // oldest unanswered prompt, except a wrapping-retry result, which answers
   // the same prompt again. Unused (and unmaintained) when the provider
@@ -507,6 +518,12 @@ export async function processQuery(
         // effectively orphaned and the next message started a blank
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
+      } else if (event.type === 'text') {
+        // Assistant text emitted mid-turn (e.g. between tool calls). The
+        // final result only carries the LAST assistant text, so complete
+        // <message> blocks composed here would otherwise be lost — deliver
+        // them now (chat runs only; task runs stay one-door).
+        midTurnSent += deliverMidTurnBlocks(event.text, routing, midTurnDelivered);
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
@@ -516,7 +533,10 @@ export async function processQuery(
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
         if (event.text) {
-          const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
+          const { sent, hasUnwrapped, taskBlocks, resultBlocks } = dispatchResultText(event.text, routing, {
+            deliveredKeys: midTurnDelivered,
+            sent: midTurnSent,
+          });
           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
           // One-door task delivery: the final text becomes the run log entry
           // while explicit append-log calls remain optional additive notes.
@@ -524,7 +544,7 @@ export async function processQuery(
           // A corrective retry handles delivery only; its result is not a
           // second run summary.
           if (routing.taskRun && !taskBlockNudged) autoAppendTaskLog(event.text);
-          if (sent === 0 && event.isError === true && !routing.taskRun) {
+          if (resultBlocks === 0 && event.isError === true && !routing.taskRun) {
             // Non-retryable error turn (e.g. a 403 billing_error) with no
             // <message> envelope: deliver the notice instead of dropping it as
             // scratchpad, and skip the re-wrap nudge — it would just re-hammer
@@ -538,12 +558,18 @@ export async function processQuery(
             });
             archivePrompts.shift();
           } else {
-            const willRetryWrapping = hasUnwrapped && !unwrappedNudged;
+            // An unwrapped final text only warrants the wrap-nudge when NOTHING
+            // was delivered this turn. If a reply already went out as a
+            // mid-turn block (recorded in midTurnDelivered), the unwrapped
+            // tail is a self-summary; nudging coaxes a redundant second
+            // message (live-observed). It stays in the scratchpad log.
+            const trulyUndelivered = hasUnwrapped && midTurnDelivered.size === 0;
+            const willRetryWrapping = trulyUndelivered && !unwrappedNudged;
             notifyExchangeComplete(onExchangeComplete, {
               prompt: archivePrompts[0] ?? initialPrompt,
               result: event.text,
               continuation: queryContinuation ?? initialContinuation,
-              status: hasUnwrapped || willRetryTaskBlocks ? 'undelivered' : 'completed',
+              status: trulyUndelivered || willRetryTaskBlocks ? 'undelivered' : 'completed',
             });
             if (willRetryWrapping) {
               unwrappedNudged = true;
@@ -569,6 +595,12 @@ export async function processQuery(
             if (!willRetryWrapping && !willRetryTaskBlocks) archivePrompts.shift();
           }
         } else archivePrompts.shift();
+        // Turn boundary: reset the mid-turn delivery state here, after the
+        // result's echo dedup and nudge decisions have used it. A nudge retry
+        // repopulates the set via its own text events before the retry result,
+        // so clearing on every result is safe.
+        midTurnDelivered.clear();
+        midTurnSent = 0;
       }
     }
   } catch (err) {
@@ -635,7 +667,7 @@ function deliverErrorResult(text: string, routing: RoutingContext): void {
     platform_id: routing.platformId,
     channel_type: routing.channelType,
     thread_id: routing.threadId,
-    content: JSON.stringify({ text }),
+    content: JSON.stringify({ text: stripHarnessTagArtifacts(text) }),
   });
 }
 
@@ -652,14 +684,94 @@ export interface TaskMessageBlock {
   body: string;
 }
 
+/** Per-turn record of blocks already delivered from mid-turn text events. */
+export interface MidTurnState {
+  /** Keys (see `midTurnKey`) of blocks delivered mid-turn this turn. */
+  deliveredKeys: Set<string>;
+  /** How many blocks were delivered mid-turn this turn. */
+  sent: number;
+}
+/**
+ * The poll-loop's canonical per-turn key for a delivered block. Both call
+ * sites already pass trimmed, artifact-stripped bodies; normalizing again
+ * here is an idempotent belt-and-suspenders that keeps the keys agreeing by
+ * construction.
+ */
+function midTurnKey(to: string, body: string): string {
+  return `${to}\u0000${stripHarnessTagArtifacts(body.trim())}`;
+}
+/**
+ * `<internal>…</internal>` spans are explicitly not-for-delivery scratchpad.
+ * Broader than `stripInternalTags` (which the scratchpad log uses): it also
+ * matches an opening tag carrying attributes, and is case-insensitive, so a
+ * draft quoted inside one can never be promoted to a real send by the
+ * mid-turn scan.
+ */
+const INTERNAL_SPAN_RE = /<internal\b[\s\S]*?<\/internal>/gi;
+/**
+ * Deliver complete <message to="...">...</message> blocks found in a mid-turn
+ * assistant text segment. The SDK's final result carries only the last
+ * assistant text, so a wrapped reply composed before a trailing tool call
+ * would otherwise never be seen (and the unwrapped-nudge would coax out only
+ * a mangled re-send of the final fragment). Chat runs only — in task runs
+ * mid-turn blocks stay inert exactly like final-text blocks (one-door: only
+ * the send_message tool delivers). Blocks inside an <internal> span are never
+ * delivered. Blocks to unknown destinations are left for the result path,
+ * which logs the drop into the scratchpad. Each delivery is recorded in
+ * `deliveredKeys` so the result path can drop the echo. Returns the number of
+ * blocks delivered.
+ */
+export function deliverMidTurnBlocks(text: string, routing: RoutingContext, deliveredKeys: Set<string>): number {
+  if (routing.taskRun) return 0;
+  const visible = text.replace(INTERNAL_SPAN_RE, '');
+  const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+  let match: RegExpExecArray | null;
+  let delivered = 0;
+  while ((match = MESSAGE_RE.exec(visible)) !== null) {
+    const toName = match[1];
+    const rawBody = match[2];
+    const body = stripHarnessTagArtifacts(rawBody.trim());
+    const dest = findByName(toName);
+    if (!dest) continue;
+    // Never deliver a blank message: a body that is empty (or was only
+    // harness-tag artifacts) is skipped here; the result path logs it.
+    if (!body) {
+      log(`Mid-turn <message to="${toName}"> empty after sanitization — skipped`);
+      continue;
+    }
+    const key = midTurnKey(toName, body);
+    if (deliveredKeys.has(key)) continue;
+    deliveredKeys.add(key);
+    sendToDestination(dest, body, routing);
+    delivered++;
+    log(`Mid-turn delivery: <message to="${toName}"> (${body.length} chars)`);
+  }
+  return delivered;
+}
+
 export function dispatchResultText(
   text: string,
   routing: RoutingContext,
-): { sent: number; hasUnwrapped: boolean; taskBlocks: TaskMessageBlock[] } {
+  midTurn?: MidTurnState,
+): { sent: number; hasUnwrapped: boolean; taskBlocks: TaskMessageBlock[]; resultBlocks: number } {
+  // <internal> spans are not-for-delivery scratchpad. Remove them BEFORE block
+  // extraction so a <message> drafted inside one is never delivered from the
+  // final text either — the mid-turn seam already guarantees this; without the
+  // same strip here the guarantee had a final-text hole. Span content still
+  // never reaches the user (the closing stripInternalTags pass removed it from
+  // the scratchpad already), so nudge/scratchpad semantics are unchanged.
+  text = text.replace(INTERNAL_SPAN_RE, '');
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
 
   let match: RegExpExecArray | null;
-  let sent = 0;
+  // Blocks delivered mid-turn count toward this turn's sent total — a final
+  // text with no (new) blocks after a mid-turn delivery is scratchpad, not an
+  // undelivered reply.
+  let sent = midTurn?.sent ?? 0;
+  // <message> blocks present in THIS result text (delivered, echoed, task or
+  // dropped alike) — drives the bare-error-text delivery gate, which must key
+  // on the error result itself, not on earlier mid-turn deliveries.
+  let resultBlocks = 0;
   // <message to> blocks left inert in a task run — drives the same-turn
   // "use send_message" nudge in processQuery.
   const taskBlocks: TaskMessageBlock[] = [];
@@ -671,8 +783,9 @@ export function dispatchResultText(
       scratchpadParts.push(text.slice(lastIndex, match.index));
     }
     const toName = match[1];
-    const body = match[2].trim();
+    const body = stripHarnessTagArtifacts(match[2].trim());
     lastIndex = MESSAGE_RE.lastIndex;
+    resultBlocks++;
 
     // One-door delivery in task sessions: only the send_message tool delivers.
     // A final-text <message to> block here is either an echo of a tool send the
@@ -690,6 +803,20 @@ export function dispatchResultText(
     if (!dest) {
       log(`Unknown destination in <message to="${toName}">, dropping block`);
       scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
+      continue;
+    }
+    // Never deliver a blank message: a body that is empty (or was only
+    // harness-tag artifacts stripped by sanitization) goes to the scratchpad
+    // log instead of writing an empty chat row.
+    if (!body) {
+      log(`Empty <message to="${toName}"> body after sanitization — not delivered`);
+      scratchpadParts.push(`[not delivered — empty after sanitization; to="${toName}"]`);
+      continue;
+    }
+    // Echo dedup: this exact block already went out mid-turn this turn
+    // (already counted in the mid-turn sent total) — don't send it twice.
+    if (midTurn?.deliveredKeys.has(midTurnKey(toName, body))) {
+      log(`Echo of mid-turn delivery to "${toName}" — dropped`);
       continue;
     }
     sendToDestination(dest, body, routing);
@@ -711,7 +838,7 @@ export function dispatchResultText(
   if (hasUnwrapped) {
     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
   }
-  return { sent, hasUnwrapped, taskBlocks };
+  return { sent, hasUnwrapped, taskBlocks, resultBlocks };
 }
 
 /**
