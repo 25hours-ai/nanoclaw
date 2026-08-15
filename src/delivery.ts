@@ -70,7 +70,14 @@ export interface ChannelDeliveryAdapter {
      *  Host-internal only — containers never see instance. */
     instance?: string,
   ): Promise<string | undefined>;
-  setTyping?(channelType: string, platformId: string, threadId: string | null, instance?: string): Promise<void>;
+  setTyping?(
+    channelType: string,
+    platformId: string,
+    threadId: string | null,
+    instance?: string,
+    status?: string,
+    statusKind?: 'auto' | 'agent',
+  ): Promise<void>;
 }
 
 let deliveryAdapter: ChannelDeliveryAdapter | null = null;

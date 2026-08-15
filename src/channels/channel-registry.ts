@@ -115,11 +115,40 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
       platformId: string,
       threadId: string | null,
       instance?: string,
+      status?: string,
+      statusKind?: 'auto' | 'agent',
     ): Promise<void> {
       const adapter = getChannelAdapterExact(instance ?? channelType);
-      await adapter?.setTyping?.(platformId, threadId);
+      await adapter?.setTyping?.(platformId, threadId, status, statusKind);
     },
   };
+}
+
+/**
+ * Registry passthrough for the optional per-thread title API. Exact-key
+ * resolution only (`mg.instance ?? mg.channel_type` — same discipline as
+ * delivery/typing dispatch: a named instance must never re-title through a
+ * sibling bot). Missing adapter or missing capability is a silent no-op —
+ * titles are decoration, never worth a delivery failure.
+ */
+export async function setThreadTitle(key: string, platformId: string, threadId: string, title: string): Promise<void> {
+  const adapter = getChannelAdapterExact(key);
+  await adapter?.setThreadTitle?.(platformId, threadId, title);
+}
+
+/**
+ * Registry passthrough for agent-view suggested prompts. Exact-key
+ * resolution; missing adapter/capability is a silent no-op — prompts are
+ * onboarding decoration, never worth a failure.
+ */
+export async function setSuggestedPrompts(
+  key: string,
+  platformId: string,
+  prompts: Array<{ title: string; message: string }>,
+  title?: string,
+): Promise<void> {
+  const adapter = getChannelAdapterExact(key);
+  await adapter?.setSuggestedPrompts?.(platformId, prompts, title);
 }
 
 /**
