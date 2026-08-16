@@ -269,6 +269,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         config.provider.onExchangeComplete?.bind(config.provider),
         prompt,
         continuation,
+        config.provider.emitsMidTurnText === true,
       );
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
@@ -359,6 +360,14 @@ export async function processQuery(
   onExchangeComplete: ((exchange: ProviderExchange) => void) | undefined,
   initialPrompt: string,
   initialContinuation: string | undefined,
+  /**
+   * The provider's declared `emitsMidTurnText` capability (see
+   * providers/types.ts). True → complete <message> blocks deliver exactly
+   * once, at parse time from streamed 'text' events, and the final result
+   * structurally strips them. False → text events are delivery-inert and the
+   * final result stays the single delivery door.
+   */
+  emitsMidTurnText = false,
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
@@ -366,15 +375,13 @@ export async function processQuery(
   // Once-per-turn guard for the task-run "<message> block was not delivered"
   // nudge — mirrors unwrappedNudged for chat turns.
   let taskBlockNudged = false;
-  // Mid-turn delivery bookkeeping (chat runs): (to, body) keys of <message>
-  // blocks already delivered from 'text' events this turn, plus how many.
-  // Lets the result path drop the echo when the model repeats a block in its
-  // final text, and suppresses the unwrapped-nudge when the wrapped reply was
-  // already sent mid-turn. Reset at the turn boundary (the 'result' event) —
-  // NOT at the follow-up push seam: query.push() does not end the in-flight
-  // turn, and its result (which may echo a mid-turn delivery) arrives after
-  // the push, so clearing there would double-deliver.
-  const midTurnDelivered = new Set<string>();
+  // How many <message> blocks were delivered from 'text' events this turn
+  // (chat runs, emitsMidTurnText providers only). A frame-local count, never
+  // keyed by content: it only feeds the unwrapped-nudge decision ("did this
+  // turn deliver anything?"). Reset at the turn boundary (the 'result'
+  // event) — NOT at the follow-up push seam: query.push() does not end the
+  // in-flight turn, and its result's nudge decision still describes the turn
+  // that is streaming.
   let midTurnSent = 0;
   // Prompt queue for the exchange hook — each result event consumes the
   // oldest unanswered prompt, except a wrapping-retry result, which answers
@@ -522,8 +529,13 @@ export async function processQuery(
         // Assistant text emitted mid-turn (e.g. between tool calls). The
         // final result only carries the LAST assistant text, so complete
         // <message> blocks composed here would otherwise be lost — deliver
-        // them now (chat runs only; task runs stay one-door).
-        midTurnSent += deliverMidTurnBlocks(event.text, routing, midTurnDelivered);
+        // them now (chat runs only; task runs stay one-door). Gated on the
+        // provider's static capability: for a provider that does not declare
+        // emitsMidTurnText the result stays the only delivery door, so a
+        // stray text event must not open a second one.
+        if (emitsMidTurnText) {
+          midTurnSent += deliverMidTurnBlocks(event.text, routing);
+        }
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
@@ -534,8 +546,8 @@ export async function processQuery(
         markCompleted(initialBatchIds);
         if (event.text) {
           const { sent, hasUnwrapped, taskBlocks, resultBlocks } = dispatchResultText(event.text, routing, {
-            deliveredKeys: midTurnDelivered,
-            sent: midTurnSent,
+            midTurnSent,
+            stripStreamedBlocks: emitsMidTurnText,
           });
           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
           // One-door task delivery: the final text becomes the run log entry
@@ -559,17 +571,17 @@ export async function processQuery(
             archivePrompts.shift();
           } else {
             // An unwrapped final text only warrants the wrap-nudge when NOTHING
-            // was delivered this turn. If a reply already went out as a
-            // mid-turn block (recorded in midTurnDelivered), the unwrapped
-            // tail is a self-summary; nudging coaxes a redundant second
-            // message (live-observed). It stays in the scratchpad log.
-            const trulyUndelivered = hasUnwrapped && midTurnDelivered.size === 0;
-            const willRetryWrapping = trulyUndelivered && !unwrappedNudged;
+            // was delivered this turn — hasUnwrapped already folds in the
+            // turn's mid-turn sent count. If a reply already went out as a
+            // mid-turn block, the unwrapped tail is a self-summary; nudging
+            // coaxes a redundant second message (live-observed). It stays in
+            // the scratchpad log.
+            const willRetryWrapping = hasUnwrapped && !unwrappedNudged;
             notifyExchangeComplete(onExchangeComplete, {
               prompt: archivePrompts[0] ?? initialPrompt,
               result: event.text,
               continuation: queryContinuation ?? initialContinuation,
-              status: trulyUndelivered || willRetryTaskBlocks ? 'undelivered' : 'completed',
+              status: hasUnwrapped || willRetryTaskBlocks ? 'undelivered' : 'completed',
             });
             if (willRetryWrapping) {
               unwrappedNudged = true;
@@ -595,11 +607,10 @@ export async function processQuery(
             if (!willRetryWrapping && !willRetryTaskBlocks) archivePrompts.shift();
           }
         } else archivePrompts.shift();
-        // Turn boundary: reset the mid-turn delivery state here, after the
-        // result's echo dedup and nudge decisions have used it. A nudge retry
-        // repopulates the set via its own text events before the retry result,
-        // so clearing on every result is safe.
-        midTurnDelivered.clear();
+        // Turn boundary: reset the per-turn sent count after the result's
+        // nudge decision has used it. A nudge retry re-counts via its own
+        // text events before the retry result, so resetting on every result
+        // is safe.
         midTurnSent = 0;
       }
     }
@@ -684,21 +695,27 @@ export interface TaskMessageBlock {
   body: string;
 }
 
-/** Per-turn record of blocks already delivered from mid-turn text events. */
-export interface MidTurnState {
-  /** Keys (see `midTurnKey`) of blocks delivered mid-turn this turn. */
-  deliveredKeys: Set<string>;
-  /** How many blocks were delivered mid-turn this turn. */
-  sent: number;
-}
-/**
- * The poll-loop's canonical per-turn key for a delivered block. Both call
- * sites already pass trimmed, artifact-stripped bodies; normalizing again
- * here is an idempotent belt-and-suspenders that keeps the keys agreeing by
- * construction.
- */
-function midTurnKey(to: string, body: string): string {
-  return `${to}\u0000${stripHarnessTagArtifacts(body.trim())}`;
+/** Options for `dispatchResultText`, describing the turn it closes. */
+export interface ResultDispatchOptions {
+  /**
+   * How many <message> blocks were already delivered from streamed text
+   * events this turn. Folds into the returned `sent` total so a bare final
+   * text after a mid-turn delivery reads as a self-summary, not an
+   * undelivered reply.
+   */
+  midTurnSent?: number;
+  /**
+   * Structural strip (providers declaring `emitsMidTurnText`): every
+   * assistant text segment streamed as a `text` event before this result, so
+   * any complete <message> block in the result text was — by construction —
+   * already part of a streamed segment and already delivered at the mid-turn
+   * door. Deliverable blocks are therefore stripped instead of sent; no
+   * record of which blocks went out is needed. Applies to exactly the blocks
+   * the mid-turn door delivers: chat runs, known destination, non-empty body.
+   * Blocks that door skips (task runs, unknown destination, empty after
+   * sanitization) keep their result-door handling.
+   */
+  stripStreamedBlocks?: boolean;
 }
 /**
  * `<internal>…</internal>` spans are explicitly not-for-delivery scratchpad.
@@ -717,11 +734,12 @@ const INTERNAL_SPAN_RE = /<internal\b[\s\S]*?<\/internal>/gi;
  * mid-turn blocks stay inert exactly like final-text blocks (one-door: only
  * the send_message tool delivers). Blocks inside an <internal> span are never
  * delivered. Blocks to unknown destinations are left for the result path,
- * which logs the drop into the scratchpad. Each delivery is recorded in
- * `deliveredKeys` so the result path can drop the echo. Returns the number of
- * blocks delivered.
+ * which logs the drop into the scratchpad. Stateless: each complete block in
+ * a streamed segment delivers exactly once, at parse time — the result path
+ * strips such blocks structurally rather than consulting any record of what
+ * was sent. Returns the number of blocks delivered.
  */
-export function deliverMidTurnBlocks(text: string, routing: RoutingContext, deliveredKeys: Set<string>): number {
+export function deliverMidTurnBlocks(text: string, routing: RoutingContext): number {
   if (routing.taskRun) return 0;
   const visible = text.replace(INTERNAL_SPAN_RE, '');
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
@@ -739,9 +757,6 @@ export function deliverMidTurnBlocks(text: string, routing: RoutingContext, deli
       log(`Mid-turn <message to="${toName}"> empty after sanitization — skipped`);
       continue;
     }
-    const key = midTurnKey(toName, body);
-    if (deliveredKeys.has(key)) continue;
-    deliveredKeys.add(key);
     sendToDestination(dest, body, routing);
     delivered++;
     log(`Mid-turn delivery: <message to="${toName}"> (${body.length} chars)`);
@@ -752,7 +767,7 @@ export function deliverMidTurnBlocks(text: string, routing: RoutingContext, deli
 export function dispatchResultText(
   text: string,
   routing: RoutingContext,
-  midTurn?: MidTurnState,
+  options?: ResultDispatchOptions,
 ): { sent: number; hasUnwrapped: boolean; taskBlocks: TaskMessageBlock[]; resultBlocks: number } {
   // <internal> spans are not-for-delivery scratchpad. Remove them BEFORE block
   // extraction so a <message> drafted inside one is never delivered from the
@@ -767,10 +782,10 @@ export function dispatchResultText(
   // Blocks delivered mid-turn count toward this turn's sent total — a final
   // text with no (new) blocks after a mid-turn delivery is scratchpad, not an
   // undelivered reply.
-  let sent = midTurn?.sent ?? 0;
-  // <message> blocks present in THIS result text (delivered, echoed, task or
-  // dropped alike) — drives the bare-error-text delivery gate, which must key
-  // on the error result itself, not on earlier mid-turn deliveries.
+  let sent = options?.midTurnSent ?? 0;
+  // <message> blocks present in THIS result text (delivered, stripped, task
+  // or dropped alike) — drives the bare-error-text delivery gate, which must
+  // key on the error result itself, not on earlier mid-turn deliveries.
   let resultBlocks = 0;
   // <message to> blocks left inert in a task run — drives the same-turn
   // "use send_message" nudge in processQuery.
@@ -813,10 +828,12 @@ export function dispatchResultText(
       scratchpadParts.push(`[not delivered — empty after sanitization; to="${toName}"]`);
       continue;
     }
-    // Echo dedup: this exact block already went out mid-turn this turn
-    // (already counted in the mid-turn sent total) — don't send it twice.
-    if (midTurn?.deliveredKeys.has(midTurnKey(toName, body))) {
-      log(`Echo of mid-turn delivery to "${toName}" — dropped`);
+    // Structural strip: with an emitsMidTurnText provider, this deliverable
+    // block was part of an assistant text segment that already streamed as a
+    // 'text' event, where the mid-turn door delivered it — by construction,
+    // not by consulting any record. Strip it here instead of sending again.
+    if (options?.stripStreamedBlocks) {
+      log(`<message to="${toName}"> in final result was already streamed — stripped, not re-sent`);
       continue;
     }
     sendToDestination(dest, body, routing);

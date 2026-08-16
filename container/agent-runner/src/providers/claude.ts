@@ -462,6 +462,14 @@ const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not fou
 
 export class ClaudeProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
+  /**
+   * Static capability, not runtime state: this provider yields a `text`
+   * event for every non-empty assistant text block (see the assistant-message
+   * branch in query()), so the final result text is always a repeat of an
+   * already-streamed segment. The poll-loop keys its one-door mid-turn
+   * delivery on this flag.
+   */
+  readonly emitsMidTurnText = true;
 
   private assistantName?: string;
   private mcpServers: Record<string, McpServerConfig>;

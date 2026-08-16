@@ -91,8 +91,10 @@ describe('stripHarnessTagArtifacts', () => {
 
 // Wiring guards: the sanitizer must be applied at BOTH delivery seams inside
 // the real processQuery path — the <message> block extraction in
-// dispatchResultText, and the bare error-result delivery. Removing either
-// call site (not just the helper) goes red here.
+// dispatchResultText (exercised here without emitsMidTurnText, where the
+// result is the delivery door; the mid-turn seam has its own sanitization
+// test in poll-loop.midturn.test.ts), and the bare error-result delivery.
+// Removing either call site (not just the helper) goes red here.
 describe('harness tag artifacts stripped from deliveries (wiring)', () => {
   it('sanitizes a <message> block body before it reaches messages_out', async () => {
     getInboundDb()

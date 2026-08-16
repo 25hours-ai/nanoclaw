@@ -38,6 +38,10 @@ afterEach(() => {
 });
 
 describe('assistant text block surfacing', () => {
+  it('declares the emitsMidTurnText capability the poll-loop keys one-door delivery on', () => {
+    expect(new ClaudeProvider({}).emitsMidTurnText).toBe(true);
+  });
+
   it('yields a text event per non-empty assistant text block, before the result', async () => {
     sdkMessages.length = 0;
     sdkMessages.push(

@@ -8,6 +8,12 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
  */
 export class MockProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
+  /**
+   * Mirrors ClaudeProvider: turnEvents() emits every configured text segment
+   * before the turn's result, so the mock exercises the same one-door
+   * mid-turn delivery path as the real SDK.
+   */
+  readonly emitsMidTurnText = true;
 
   private responseFactory: (prompt: string) => string;
   private textFactory: ((prompt: string) => string[]) | undefined;
@@ -40,12 +46,17 @@ export class MockProvider implements AgentProvider {
     const responseFactory = this.responseFactory;
     const textFactory = this.textFactory;
     // Mid-turn text segments (if configured) followed by the turn's result —
-    // mirrors the SDK's assistant-message → result ordering.
+    // mirrors the SDK's assistant-message → result ordering. The result text
+    // itself streams as the LAST text event first: the real SDK's result only
+    // repeats the final assistant text, which already streamed — that is the
+    // emitsMidTurnText contract this mock declares.
     function* turnEvents(prompt: string): Generator<ProviderEvent> {
       for (const text of textFactory?.(prompt) ?? []) {
         yield { type: 'text', text };
       }
-      yield { type: 'result', text: responseFactory(prompt) };
+      const result = responseFactory(prompt);
+      if (result) yield { type: 'text', text: result };
+      yield { type: 'result', text: result };
     }
 
     const events: AsyncIterable<ProviderEvent> = {

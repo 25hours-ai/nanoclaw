@@ -74,7 +74,7 @@ describe('mid-turn <internal> exclusion', () => {
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual([]);
   });
@@ -91,7 +91,7 @@ describe('mid-turn <internal> exclusion', () => {
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual([]);
   });
@@ -110,25 +110,25 @@ describe('mid-turn <internal> exclusion', () => {
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['Here is the brief.']);
   });
 
-  it('an internal draft does not poison dedup — the same body still sends when meant', async () => {
+  it('an internal draft does not suppress the same body genuinely sent later in the turn', async () => {
     seedDest();
     const body = 'The answer is 4.';
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
       // Drafted inside <internal> first, then genuinely sent in the same turn.
-      // The draft must not have registered a dedup key.
+      // The draft must have left no trace that blocks the real send.
       yield { type: 'text', text: `<internal><message to="discord-main">${body}</message></internal>` };
       yield { type: 'text', text: `<message to="discord-main">${body}</message>` };
       yield { type: 'result', text: '' };
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual([body]);
   });
@@ -146,7 +146,7 @@ describe('unwrapped final summary after a delivered reply', () => {
     }
     const { query, pushes } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['Real reply.']);
     expect(pushes.filter((p) => p.includes('was not delivered'))).toEqual([]);
@@ -160,7 +160,7 @@ describe('unwrapped final summary after a delivered reply', () => {
     }
     const { query, pushes } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(pushes.length).toBeGreaterThan(0);
   });
@@ -177,7 +177,7 @@ describe('mid-turn recovery when the final result is empty', () => {
     }
     const { query, pushes } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['Here is the brief: three pillars.']);
     expect(pushes).toHaveLength(0);
@@ -189,20 +189,23 @@ describe('mid-turn recovery when the final result is empty', () => {
       yield { type: 'init', continuation: 's1' };
       yield { type: 'text', text: '<message to="discord-main">turn one</message>' };
       yield { type: 'result', text: '' };
-      // Turn 2 composes nothing addressed and ends empty — turn 1's block must
-      // not be resurrected by the reset-at-turn-boundary bookkeeping.
+      // Turn 2 composes nothing addressed and ends empty — nothing carried
+      // across the turn boundary may resurrect turn 1's block.
       yield { type: 'text', text: 'just thinking' };
       yield { type: 'result', text: '' };
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['turn one']);
   });
 });
 
-describe('final-text <internal> exclusion (the result-path half of the guarantee)', () => {
+// The result door is still a live delivery path for providers that do NOT
+// declare emitsMidTurnText — these run without the capability so the final
+// text actually delivers, and the <internal> exclusion must hold there too.
+describe('final-text <internal> exclusion (the result-door half of the guarantee)', () => {
   it('never delivers a block wrapped in <internal> in the FINAL result text', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
@@ -214,7 +217,7 @@ describe('final-text <internal> exclusion (the result-path half of the guarantee
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false);
 
     expect(deliveredTexts()).toEqual([]);
   });
@@ -232,7 +235,7 @@ describe('final-text <internal> exclusion (the result-path half of the guarantee
     }
     const { query } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false);
 
     expect(deliveredTexts()).toEqual(['Here is the final version.']);
   });
@@ -245,7 +248,7 @@ describe('final-text <internal> exclusion (the result-path half of the guarantee
     }
     const { query, pushes } = makeStubQuery(events());
 
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false);
 
     expect(deliveredTexts()).toEqual([]);
     expect(pushes.filter((p) => p.includes('must be wrapped'))).toEqual([]);

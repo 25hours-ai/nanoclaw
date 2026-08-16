@@ -8,6 +8,20 @@ export interface AgentProvider {
    */
   readonly supportsNativeSlashCommands: boolean;
 
+  /**
+   * Optional capability: true when the provider surfaces EVERY assistant text
+   * segment as a streamed `text` event before the turn's `result` — so the
+   * result text is always a repeat of a segment that already streamed. When
+   * declared, the poll-loop delivers complete <message> blocks at parse time
+   * from the streamed events, and the final-result handler structurally
+   * strips deliverable blocks instead of sending them (they went out at the
+   * mid-turn door by construction — no runtime bookkeeping involved).
+   * Providers that omit this (or set false) keep the single result-door
+   * delivery path: text events are delivery-inert and blocks in the final
+   * result text are delivered from there.
+   */
+  readonly emitsMidTurnText?: boolean;
+
   /** Register shared memory through the provider's native session-start mechanism. */
   registerMemorySessionHook(hook: MemorySessionHookRegistration): void;
 
@@ -150,9 +164,11 @@ export type ProviderEvent =
    * An assistant text segment emitted mid-turn (e.g. between tool calls).
    * The SDK's final `result` carries only the LAST assistant text, so a
    * complete <message to="..."> block composed before a trailing tool call
-   * never reaches the result event. The poll-loop scans these segments for
-   * closed message blocks and delivers them as they are emitted (chat runs
-   * only), deduping the echo if the block reappears in the final result.
+   * never reaches the result event. For providers declaring
+   * `emitsMidTurnText`, the poll-loop scans these segments for closed
+   * message blocks and delivers them as they are emitted (chat runs only);
+   * the final result then structurally strips such blocks rather than
+   * delivering them again.
    */
   | { type: 'text'; text: string }
   | { type: 'error'; message: string; retryable: boolean; classification?: string }
