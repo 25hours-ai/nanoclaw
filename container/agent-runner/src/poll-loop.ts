@@ -7,7 +7,7 @@ import {
   type MessageInRow,
 } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
-import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
+import { getInboundDb, getOutboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
   clearCurrentInReplyTo,
@@ -378,11 +378,21 @@ export async function processQuery(
   // How many <message> blocks were delivered from 'text' events this turn
   // (chat runs, emitsMidTurnText providers only). A frame-local count, never
   // keyed by content: it only feeds the unwrapped-nudge decision ("did this
-  // turn deliver anything?"). Reset at the turn boundary (the 'result'
-  // event) — NOT at the follow-up push seam: query.push() does not end the
-  // in-flight turn, and its result's nudge decision still describes the turn
-  // that is streaming.
+  // turn deliver anything?") and arms the result-door structural strip.
+  // Reset at the turn boundary (the 'result' event) — NOT at the follow-up
+  // push seam: query.push() does not end the in-flight turn, and its
+  // result's nudge decision still describes the turn that is streaming.
   let midTurnSent = 0;
+  // Outbound seq high-water mark at the turn boundary — a frame-local NUMBER,
+  // not a content record. The mid-turn door uses it to recognize a block that
+  // is a verbatim repeat of a message already written to outbound.db EARLIER
+  // THIS TURN by a previous streamed segment (live-observed: the model
+  // re-emits the identical block as its final text after a trailing tool
+  // call; delivering both copies is the double-send this design must not
+  // reintroduce). The "have we sent this?" truth lives in the outbound DB the
+  // door already writes to — no in-process delivery ledger. Reset alongside
+  // midTurnSent at each result.
+  let turnStartSeq = maxOutboundSeq();
   // Prompt queue for the exchange hook — each result event consumes the
   // oldest unanswered prompt, except a wrapping-retry result, which answers
   // the same prompt again. Unused (and unmaintained) when the provider
@@ -534,7 +544,7 @@ export async function processQuery(
         // emitsMidTurnText the result stays the only delivery door, so a
         // stray text event must not open a second one.
         if (emitsMidTurnText) {
-          midTurnSent += deliverMidTurnBlocks(event.text, routing);
+          midTurnSent += deliverMidTurnBlocks(event.text, routing, turnStartSeq);
         }
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
@@ -547,7 +557,19 @@ export async function processQuery(
         if (event.text) {
           const { sent, hasUnwrapped, taskBlocks, resultBlocks } = dispatchResultText(event.text, routing, {
             midTurnSent,
-            stripStreamedBlocks: emitsMidTurnText,
+            // Structural strip is armed only when this turn PROVED the
+            // streaming door worked (>=1 mid-turn delivery). midTurnSent === 0
+            // with a deliverable block in the result means the premise "every
+            // complete result block already streamed and was delivered" did
+            // NOT hold for this turn — SDK drift (result text from a field the
+            // stream never carried, e.g. errors[]), a block split across
+            // streamed segments that only the result text completes, or a
+            // destination created between stream time and result time. Fall
+            // back to base result-door delivery for exactly those turns.
+            // Provably duplicate-free: midTurnSent === 0 means zero blocks
+            // were delivered mid-turn, so the result door is the FIRST door —
+            // there is nothing a result-door send could duplicate.
+            stripStreamedBlocks: emitsMidTurnText && midTurnSent > 0,
           });
           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
           // One-door task delivery: the final text becomes the run log entry
@@ -610,8 +632,12 @@ export async function processQuery(
         // Turn boundary: reset the per-turn sent count after the result's
         // nudge decision has used it. A nudge retry re-counts via its own
         // text events before the retry result, so resetting on every result
-        // is safe.
+        // is safe. The seq high-water mark advances past everything written
+        // this turn (door, result-door, error deliveries alike), so the next
+        // turn's echo check never reaches back across the boundary — a later
+        // turn genuinely re-sending the same body still delivers.
         midTurnSent = 0;
+        turnStartSeq = maxOutboundSeq();
       }
     }
   } catch (err) {
@@ -714,6 +740,14 @@ export interface ResultDispatchOptions {
    * the mid-turn door delivers: chat runs, known destination, non-empty body.
    * Blocks that door skips (task runs, unknown destination, empty after
    * sanitization) keep their result-door handling.
+   *
+   * Caller contract: set this only when at least one mid-turn delivery
+   * actually happened this turn (`midTurnSent > 0`). A capability provider
+   * whose turn streamed no deliverable block (SDK drift, split blocks, a
+   * destination that appeared only after streaming) must keep the result
+   * door live — that stateless fallback is what makes "deliver mid-turn,
+   * strip at result" safe against a premise violation, and it can never
+   * double-deliver because nothing was sent mid-turn to duplicate.
    */
   stripStreamedBlocks?: boolean;
 }
@@ -738,9 +772,24 @@ const INTERNAL_SPAN_RE = /<internal\b[\s\S]*?<\/internal>/gi;
  * a streamed segment delivers exactly once, at parse time — the result path
  * strips such blocks structurally rather than consulting any record of what
  * was sent. Returns the number of blocks delivered.
+ *
+ * Failure ordering: a writeMessageOut failure here propagates and fails the
+ * whole turn loudly — identical to a write failure at the result door, which
+ * also propagates out of processQuery. runPollLoop's catch then surfaces an
+ * error message to the user and acks the batch. The alternative (swallow the
+ * error and continue the turn) would let a later successful block arm the
+ * structural strip and silently strip-drop the failed block at the result —
+ * a silent loss. An outbound write failure means the session DB is broken;
+ * loud is correct.
  */
-export function deliverMidTurnBlocks(text: string, routing: RoutingContext): number {
+export function deliverMidTurnBlocks(text: string, routing: RoutingContext, turnStartSeq?: number): number {
   if (routing.taskRun) return 0;
+  // Seq high-water mark at THIS segment's start: the echo check below only
+  // looks at rows written by EARLIER segments of the same turn — a verbatim
+  // duplicate within one segment (two identical blocks in one text) is an
+  // explicit double-send and still delivers twice, exactly as the result
+  // door always treated it.
+  const segStartSeq = turnStartSeq === undefined ? 0 : maxOutboundSeq();
   const visible = text.replace(INTERNAL_SPAN_RE, '');
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
   let match: RegExpExecArray | null;
@@ -757,11 +806,60 @@ export function deliverMidTurnBlocks(text: string, routing: RoutingContext): num
       log(`Mid-turn <message to="${toName}"> empty after sanitization — skipped`);
       continue;
     }
+    // Cross-segment echo guard (live-captured shape, SDK battery s03): after
+    // a tool call the model often re-emits the ALREADY-SENT block verbatim as
+    // its final text. That final text streams as its own text event, so
+    // without this check the door would deliver the same message twice. The
+    // check consults the outbound DB — the durable record of what this turn
+    // actually wrote — over the frame-local seq window (turnStartSeq,
+    // segStartSeq]: identical body, same destination, written this turn by an
+    // earlier segment ⇒ echo, skip. No in-process content ledger; cross-turn
+    // repeats are out of the window and deliver normally.
+    if (turnStartSeq !== undefined && wasWrittenInSeqWindow(dest, body, turnStartSeq, segStartSeq)) {
+      log(`Mid-turn <message to="${toName}"> is a verbatim repeat of a message already sent this turn — skipped`);
+      continue;
+    }
     sendToDestination(dest, body, routing);
     delivered++;
     log(`Mid-turn delivery: <message to="${toName}"> (${body.length} chars)`);
   }
   return delivered;
+}
+
+/** Current outbound seq high-water mark (0 when the table is empty). */
+function maxOutboundSeq(): number {
+  return (getOutboundDb().prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
+}
+
+/**
+ * Does messages_out already hold a chat row with this exact destination and
+ * body, written in the seq window (afterSeq, uptoSeq]? Used by the mid-turn
+ * door's cross-segment echo guard. Content equality is exact: the door writes
+ * `JSON.stringify({ text: body })` after the same trim/sanitize pipeline, so
+ * a true door-written duplicate always matches; a body differing by even one
+ * character is a different message and delivers.
+ */
+function wasWrittenInSeqWindow(dest: DestinationEntry, body: string, afterSeq: number, uptoSeq: number): boolean {
+  if (uptoSeq <= afterSeq) return false;
+  try {
+    const platformId = dest.type === 'channel' ? dest.platformId! : dest.agentGroupId!;
+    const channelType = dest.type === 'channel' ? dest.channelType! : 'agent';
+    const row = getOutboundDb()
+      .prepare(
+        `SELECT 1 AS hit FROM messages_out
+         WHERE seq > ? AND seq <= ? AND kind = 'chat'
+           AND platform_id = ? AND channel_type = ? AND content = ?
+         LIMIT 1`,
+      )
+      .get(afterSeq, uptoSeq, platformId, channelType, JSON.stringify({ text: body }));
+    return row !== undefined && row !== null;
+  } catch (err) {
+    // The guard is an anti-duplication refinement; if the lookup itself
+    // fails, fall through to delivery (the write will surface any real DB
+    // breakage loudly).
+    log(`Echo-guard lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
 }
 
 export function dispatchResultText(
