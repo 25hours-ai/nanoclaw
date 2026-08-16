@@ -263,13 +263,12 @@ async function sweepSession(session: Session): Promise<void> {
     }
 
     // 7. Cross-session echo backlog pruning. Pending trigger=0 'session-echo'
-    // rows have no other TTL — cap them (newest-N per session, task sessions
-    // get a longer horizon, plus a hard age cutoff) so fan-out can never grow
-    // inbound.db unboundedly.
+    // rows have no other TTL — cap them (newest-N per session, plus a hard
+    // age cutoff) so fan-out can never grow inbound.db unboundedly.
     // MODULE-HOOK:cross-session-echo-prune:start
     try {
       const { pruneEchoBacklog } = await import('./modules/cross-session-context/index.js');
-      const pruned = pruneEchoBacklog(inDb, { isTaskSession: isTaskThread(session.thread_id) });
+      const pruned = pruneEchoBacklog(inDb);
       if (pruned > 0) {
         log.info('Pruned session-echo backlog', { sessionId: session.id, pruned });
       }

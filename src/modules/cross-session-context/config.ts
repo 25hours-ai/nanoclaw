@@ -16,15 +16,19 @@ export const ECHO_CHANNEL_TYPE = 'session-echo';
  *  just a new surface value. */
 export const ECHO_SIBLING_SURFACE = 'dm-thread';
 
+/** echo.surface value stamped on task-session-source echoes — a scheduled
+ *  task's delivered user-facing send, fanned ONLY into sessions of the
+ *  messaging group it was delivered to (audience-subset rule: that surface
+ *  already displayed the message, so the fan widens nothing). */
+export const ECHO_TASK_SURFACE = 'task-delivery';
+
 /** Per-message text cap on echo rows: head-truncated, '…' appended when cut. */
 export const ECHO_TEXT_MAX_CHARS = 500;
 
-/** Pending echo rows the sweep pruner keeps per non-task session (newest first). */
+/** Pending echo rows the sweep pruner keeps per session (newest first).
+ *  One cap for all sessions: under the same-conversation audience rule,
+ *  task sessions receive no echoes. */
 export const ECHO_BACKLOG_CAP = 50;
-
-/** Pending echo rows kept per task session — task series wake with "what
- *  happened since last run", so they get a longer horizon. */
-export const ECHO_BACKLOG_CAP_TASK = 100;
 
 /** Pending echo rows older than this are dropped regardless of the count caps. */
 export const ECHO_MAX_AGE_DAYS = 7;

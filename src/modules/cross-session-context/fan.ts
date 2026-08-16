@@ -10,14 +10,18 @@
  * fanned (loop guard: fan entries reject 'session-echo' rows, and fan writes
  * go through writeSessionMessage, which never re-enters routeInbound).
  *
- * Audience rule (pragmatic form — membership tracking lands later):
- *   - task sessions of the group are ALWAYS targets, from DM and room sources
- *   - room source → additionally the group's DM sessions
- *   - DM source  → task sessions, plus sibling sessions of the SAME messaging
- *     group (parallel conversation-threads of that same DM — same audience,
- *     so trivially safe). DM content never enters rooms or OTHER DMs.
- *   - room→room: not in v1 (not even same-mg room threads); task sessions are
- *     never a SOURCE
+ * Audience rule: a message fans
+ * ONLY into sibling sessions of the conversation it actually appeared in —
+ * for inbound, the messaging group it arrived on; for outbound, the
+ * messaging group it was delivered to. Same messaging group = identical
+ * audience by definition, so every fan is provably audience-safe with no
+ * membership knowledge needed. Nothing else is ever a target: not the
+ * group's other conversations (room→DM is retired), not task sessions
+ * (conversation→task is retired — task sessions have no messaging group).
+ * Cross-conversation awareness is pull-only: `ncl sessions history`.
+ * Task sessions are still never an inbound source (the series prompt is
+ * series-internal); a task's DELIVERED user-facing send fans like any other
+ * delivery — into the sessions of the conversation it landed in.
  */
 import {
   getMessagingGroup,
@@ -28,13 +32,14 @@ import { getSessionsByAgentGroup, isTaskThread } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { AgentGroup, MessagingGroup, Session } from '../../types.js';
-import { ECHO_CHANNEL_TYPE, ECHO_SIBLING_SURFACE, ECHO_TEXT_MAX_CHARS } from './config.js';
+import { ECHO_CHANNEL_TYPE, ECHO_SIBLING_SURFACE, ECHO_TASK_SURFACE, ECHO_TEXT_MAX_CHARS } from './config.js';
 
-export type EchoSurface = 'dm' | 'room';
-
-/** Surface values that appear on the wire in echo.{surface}: the two source
- *  surfaces plus the same-mg sibling-thread marker. */
-export type EchoWireSurface = EchoSurface | typeof ECHO_SIBLING_SURFACE;
+/** Surface values that appear on the wire in echo.{surface}: the sibling-
+ *  thread marker and the task-delivery marker (backfill's dm-timeline is
+ *  written by backfill.ts directly). Every fan target is a session of the
+ *  conversation the message appeared in, so the old cross-surface 'dm'/'room'
+ *  values are no longer emitted. */
+export type EchoWireSurface = typeof ECHO_SIBLING_SURFACE | typeof ECHO_TASK_SURFACE;
 
 /** Inbound kinds that are real chat traffic. Everything else (task, system,
  *  approval plumbing) never fans. */
@@ -72,39 +77,37 @@ export function buildSiblingEchoLabel(
   return who ? `another conversation with ${who}` : `another conversation in ${buildEchoLabel(mg, senderName)}`;
 }
 
+/** Label for an echo of a message the agent delivered INTO this conversation
+ *  from elsewhere (a task run, or a cross-conversation send). Targets are
+ *  always sessions of the very conversation the message landed in, so
+ *  "this DM"/"this room" is accurate from every receiver's perspective. */
+export function buildDeliveredEchoLabel(mg: Pick<MessagingGroup, 'is_group'>, fromTask: boolean): string {
+  const where = mg.is_group === 1 ? 'this room' : 'this DM';
+  return fromTask ? `${where}, posted by your scheduled task` : `${where}, posted by you from another conversation`;
+}
+
 export interface EchoTargetCandidate {
   id: string;
   status: string;
   messaging_group_id: string | null;
-  thread_id: string | null;
 }
 
 /**
- * Pure audience rule. `isDmMessagingGroup` resolves whether a candidate's
- * messaging group is a DM (is_group=0) — injected so the rule stays testable
- * without a central DB. `sourceMessagingGroupId` is the source conversation's
- * messaging group, used to admit same-mg sibling threads for DM sources.
+ * Pure audience rule: only active sibling sessions of the conversation
+ * the message appeared in. Same messaging group = identical audience, so the
+ * rule needs no membership knowledge. Sessions with no messaging group (task
+ * sessions, a2a targets) are never targets, and an unresolved source
+ * conversation fans nowhere.
  */
 export function selectEchoTargets<T extends EchoTargetCandidate>(
   candidates: T[],
   sourceSessionId: string,
-  sourceSurface: EchoSurface,
   sourceMessagingGroupId: string | null,
-  isDmMessagingGroup: (messagingGroupId: string) => boolean,
 ): T[] {
-  return candidates.filter((s) => {
-    if (s.id === sourceSessionId || s.status !== 'active') return false;
-    // System sessions: task sessions are always in the audience; any other
-    // messaging-group-less session (a2a targets, future system threads) is not.
-    if (s.messaging_group_id === null) return isTaskThread(s.thread_id);
-    // Room sources additionally reach the group's DM sessions (never other
-    // rooms — not even same-mg room threads; room→room is not in v1).
-    if (sourceSurface === 'room') return isDmMessagingGroup(s.messaging_group_id);
-    // DM sources additionally reach sibling sessions of the SAME messaging
-    // group — the parallel conversation-threads of that same DM (identical
-    // audience). Never rooms, never other DMs' sessions.
-    return sourceMessagingGroupId !== null && s.messaging_group_id === sourceMessagingGroupId;
-  });
+  if (sourceMessagingGroupId === null) return [];
+  return candidates.filter(
+    (s) => s.id !== sourceSessionId && s.status === 'active' && s.messaging_group_id === sourceMessagingGroupId,
+  );
 }
 
 function parseContent(raw: string): { text: string; sender: string | null; senderId: string | null } {
@@ -123,14 +126,13 @@ function parseContent(raw: string): { text: string; sender: string | null; sende
 interface EchoFanInput {
   agentGroupId: string;
   sourceSessionId: string;
-  /** Messaging group of the source conversation (same-mg sibling detection). */
+  /** Messaging group of the conversation the message appeared in — the ONLY
+   *  conversation whose sessions are targets. */
   sourceMessagingGroupId: string | null;
   origMessageId: string;
   timestamp: string;
-  surface: EchoSurface;
+  surface: EchoWireSurface;
   label: string;
-  /** Label used when the target is a sibling thread of the same messaging group. */
-  siblingLabel: string;
   platformId: string;
   text: string;
   sender: string;
@@ -139,41 +141,18 @@ interface EchoFanInput {
 
 function fanEcho(input: EchoFanInput): number {
   const candidates = getSessionsByAgentGroup(input.agentGroupId);
-  const dmCache = new Map<string, boolean>();
-  const isDm = (mgId: string): boolean => {
-    let v = dmCache.get(mgId);
-    if (v === undefined) {
-      v = getMessagingGroup(mgId)?.is_group === 0;
-      dmCache.set(mgId, v);
-    }
-    return v;
-  };
-  const targets = selectEchoTargets(
-    candidates,
-    input.sourceSessionId,
-    input.surface,
-    input.sourceMessagingGroupId,
-    isDm,
-  );
+  const targets = selectEchoTargets(candidates, input.sourceSessionId, input.sourceMessagingGroupId);
   if (targets.length === 0) return 0;
 
-  const body = {
+  const content = JSON.stringify({
     text: truncateEchoText(input.text),
     sender: input.sender,
     senderId: input.senderId,
-  };
-  const content = JSON.stringify({ ...body, echo: { surface: input.surface, label: input.label } });
-  // Same-mg sibling threads get a sibling-flavored echo (contract fields
-  // identical — only the surface/label values differ).
-  const siblingContent = JSON.stringify({
-    ...body,
-    echo: { surface: ECHO_SIBLING_SURFACE, label: input.siblingLabel },
+    echo: { surface: input.surface, label: input.label },
   });
 
   let written = 0;
   for (const target of targets) {
-    const isSibling =
-      input.sourceMessagingGroupId !== null && target.messaging_group_id === input.sourceMessagingGroupId;
     try {
       writeSessionMessage(input.agentGroupId, target.id, {
         id: echoRowId(input.origMessageId, target.id),
@@ -182,7 +161,7 @@ function fanEcho(input: EchoFanInput): number {
         platformId: input.platformId,
         channelType: ECHO_CHANNEL_TYPE,
         threadId: null,
-        content: isSibling ? siblingContent : content,
+        content,
         trigger: 0,
         sourceSessionId: input.sourceSessionId,
       });
@@ -203,7 +182,7 @@ function fanEcho(input: EchoFanInput): number {
 /**
  * Router hook: fan a just-written trigger=1 inbound message into sibling
  * sessions. Call ONLY for the engaged (wake) branch — accumulate (trigger=0)
- * writes must never fan. Never throws; returns rows written.
+ * writes must never fan (D3). Never throws; returns rows written.
  */
 export function fanInboundMessage(args: {
   /** Source session the trigger=1 row was written to. */
@@ -227,16 +206,16 @@ export function fanInboundMessage(args: {
     if (isTaskThread(session.thread_id)) return 0;
     const parsed = parseContent(args.content);
     if (!parsed.text) return 0;
-    const surface: EchoSurface = mg.is_group === 1 ? 'room' : 'dm';
+    // Targets are always sibling threads of the conversation the message
+    // arrived on, so every echo is sibling-flavored.
     return fanEcho({
       agentGroupId: session.agent_group_id,
       sourceSessionId: session.id,
       sourceMessagingGroupId: mg.id,
       origMessageId: args.messageId,
       timestamp: args.timestamp,
-      surface,
-      label: buildEchoLabel(mg, parsed.sender),
-      siblingLabel: buildSiblingEchoLabel(mg, parsed.sender),
+      surface: ECHO_SIBLING_SURFACE,
+      label: buildSiblingEchoLabel(mg, parsed.sender),
       platformId: mg.platform_id,
       text: parsed.text,
       sender: parsed.sender ?? 'unknown',
@@ -250,14 +229,13 @@ export function fanInboundMessage(args: {
 
 /**
  * Delivery hook: fan the agent's own just-delivered user-facing message into
- * sibling sessions. Caller applies the user-facing predicate (kind not
- * system/task_log, channel_type not 'agent'); the guards here are
- * belt-and-braces so the contract holds even if call sites drift. The source
- * surface is the conversation the message was DELIVERED to (origin-session-
- * first, then own-destination-first, mirroring delivery.ts's resolution
- * order — needed so sibling-instance rows sharing one channel address
- * resolve to the sender's own row, not an arbitrary sibling's). Never
- * throws.
+ * the sessions of the conversation it was delivered to. Caller applies the
+ * user-facing predicate (kind not system/task_log, channel_type not 'agent');
+ * the guards here are belt-and-braces so the contract holds even if call
+ * sites drift. The delivered-to conversation resolves origin-session-first,
+ * then own-destination-first, mirroring delivery.ts's resolution order —
+ * needed so sibling-instance rows sharing one channel address resolve to the
+ * sender's own row, not an arbitrary sibling's. Never throws.
  */
 export function fanOutboundMessage(
   msg: {
@@ -274,9 +252,7 @@ export function fanOutboundMessage(
     if (msg.kind === 'system' || msg.kind === 'task_log') return 0;
     if (!msg.channel_type || !msg.platform_id) return 0;
     if (msg.channel_type === 'agent' || msg.channel_type === ECHO_CHANNEL_TYPE) return 0;
-    // Task sessions are never a SOURCE — their sends already log to the series
-    // run log, and fanning them would leak scheduled-run output everywhere.
-    if (isTaskThread(session.thread_id)) return 0;
+    const isTaskSource = isTaskThread(session.thread_id);
 
     const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
     const mg =
@@ -288,16 +264,20 @@ export function fanOutboundMessage(
 
     const parsed = parseContent(msg.content);
     if (!parsed.text) return 0;
-    const surface: EchoSurface = mg.is_group === 1 ? 'room' : 'dm';
+    // Targets are the sessions of the conversation the message was DELIVERED
+    // to. An origin-conversation reply reads as a sibling-thread echo;
+    // a message the agent posted INTO this conversation from elsewhere (a
+    // task run, or a cross-conversation send) gets the delivered flavor.
+    const isOriginSend = session.messaging_group_id === mg.id;
     return fanEcho({
       agentGroupId: session.agent_group_id,
       sourceSessionId: session.id,
       sourceMessagingGroupId: mg.id,
       origMessageId: msg.id,
       timestamp: new Date().toISOString(),
-      surface,
-      label: buildEchoLabel(mg, mg.name),
-      siblingLabel: buildSiblingEchoLabel(mg, mg.name),
+      surface: isTaskSource ? ECHO_TASK_SURFACE : ECHO_SIBLING_SURFACE,
+      label:
+        !isTaskSource && isOriginSend ? buildSiblingEchoLabel(mg, mg.name) : buildDeliveredEchoLabel(mg, isTaskSource),
       platformId: mg.platform_id,
       text: parsed.text,
       sender: agentGroup.name,

@@ -242,10 +242,11 @@ async function drainSession(session: Session): Promise<void> {
         // shouldn't get a gap in their typing indicator for them.
         if (msg.kind !== 'system' && msg.channel_type !== 'agent') {
           pauseTypingRefreshAfterDelivery(session.id);
-          // Cross-session context: fan the agent's own user-facing
-          // message into sibling sessions. task_log rows are series
-          // bookkeeping (one-door delivery), not user-facing — excluded.
-          // Runs after markDelivered so a delivery retry never double-fans.
+          // Cross-session context: fan the agent's own user-facing message
+          // into the sessions of the conversation it was delivered to.
+          // task_log rows are series bookkeeping (one-door delivery), not
+          // user-facing — excluded. Runs after markDelivered so a delivery
+          // retry never double-fans.
           if (msg.kind !== 'task_log') {
             fanOutboundMessage(msg, session, agentGroup);
           }

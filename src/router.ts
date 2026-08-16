@@ -527,9 +527,9 @@ async function deliverToAgent(
 
   if (wake) {
     // Cross-session context: fan the triggering message into sibling
-    // sessions of this agent group as trigger=0 'session-echo' rows. Only the
-    // engaged branch fans — the accumulate branch above (trigger=0) never
-    // does, so ambient backlog is never copied twice. Never throws.
+    // sessions of the SAME conversation as trigger=0 'session-echo' rows.
+    // Only the engaged branch fans — the accumulate branch above (trigger=0)
+    // never does, so ambient backlog is never copied twice. Never throws.
     fanInboundMessage({
       session,
       mg,
