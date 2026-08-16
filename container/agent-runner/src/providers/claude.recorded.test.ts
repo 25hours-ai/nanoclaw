@@ -138,10 +138,14 @@ describe('captured end-to-end poll-loop outcomes', () => {
     expect(pushes).toHaveLength(0);
   });
 
-  it('s04b: genuine half-message split across assistant messages — no fragment delivered, wrap-nudge recovery', async () => {
+  it('s04b: genuine half-message split across assistant messages — assembled and delivered once, no nudge', async () => {
+    // Captured segments: "<message to=\"discord-main\">part one" then
+    // "part two</message>" (a Bash call between them). Assembly joins the
+    // fragments verbatim — the model put no separator at the boundary, so
+    // the delivered body is exactly the concatenation.
     const { delivered, pushes } = await runThroughPollLoop('s04b-tool-inside-block');
-    expect(delivered).toEqual([]);
-    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(1);
+    expect(delivered).toEqual(['part onepart two']);
+    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(0);
   });
 
   it('s06: tool first, block only in the final text — delivered once', async () => {
@@ -180,9 +184,18 @@ describe('captured end-to-end poll-loop outcomes', () => {
     expect(delivered[0]).not.toContain('Blunt draft');
   });
 
-  it('s14: two streamed turns — one delivery each, repeats stripped per turn', async () => {
+  it('s14: two streamed turns — one delivery each, result repeats inert per turn', async () => {
     const { delivered, pushes } = await runThroughPollLoop('s14-two-turns-stream');
     expect(delivered).toEqual(['turn one', 'turn two']);
+    expect(pushes).toHaveLength(0);
+  });
+
+  it('s16: block spread across THREE assistant messages (two tool calls between) — assembled, one delivery, no nudge', async () => {
+    // Captured segments: "<message to=\"discord-main\">alpha " / Bash /
+    // "beta " / Bash / "gamma</message>"; the SDK result carried only the
+    // tail fragment "gamma</message>".
+    const { delivered, pushes } = await runThroughPollLoop('s16-three-way-split');
+    expect(delivered).toEqual(['alpha beta gamma']);
     expect(pushes).toHaveLength(0);
   });
 });

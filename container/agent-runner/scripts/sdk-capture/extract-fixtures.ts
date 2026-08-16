@@ -29,6 +29,7 @@ const PICK = [
   's12-abort-midstream',
   's13-internal-draft',
   's14-two-turns-stream',
+  's16-three-way-split',
 ];
 
 type Raw = Record<string, unknown> & {

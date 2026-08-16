@@ -5,19 +5,19 @@ import { getUndeliveredMessages } from './db/messages-out.js';
 import { processQuery } from './poll-loop.js';
 import type { AgentQuery, ProviderEvent } from './providers/types.js';
 
-// Adversarial verification of the structural-strip premise: "any complete
-// deliverable <message> block in the result text was already streamed as a
-// text event, hence already delivered at the mid-turn door."
+// Adversarial verification of the one-door contract for emitsMidTurnText
+// providers: mid-turn streaming is the SINGLE content door. The result door
+// NEVER writes content to messages_out (error results excepted) — its only
+// other job is the nudge decision: a turn that delivered nothing (no door
+// delivery, no DB-visible send like MCP send_message) whose result still
+// carries content gets the wrap-nudge, so the model re-sends and the retry
+// streams through the mid-turn door. Streaming-door misses (SDK drift, a
+// destination appearing only after streaming) therefore degrade to
+// nudge-and-retry — deliberately, never to a direct result-door send.
 //
-// The premise is an SDK-behavioral claim, NOT enforceable from provider code:
-// ClaudeProvider's result event takes its text verbatim from the SDK's own
-// `result` / `errors[]` fields (providers/claude.ts), while text events come
-// from assistant messages — two independent sources. These tests construct
-// the divergence cases and pin the stateless fallback that makes them safe:
-// the strip is armed only when the turn delivered at least one block
-// mid-turn (midTurnSent > 0); a turn with zero mid-turn deliveries keeps the
-// result door fully live. The fallback cannot double-deliver — midTurnSent
-// === 0 means nothing was sent that a result-door send could duplicate.
+// The result text is an independent SDK field the provider cannot prove
+// equal to streamed content (see providers/claude.ts result branch), which
+// is why these divergence shapes are constructed and pinned here.
 
 beforeEach(() => {
   initTestSessionDb();
@@ -69,27 +69,32 @@ function deliveredTexts(): string[] {
     .map((m) => (JSON.parse(m.content) as { text: string }).text);
 }
 
-// ── A4: SDK-drift guard (the catastrophic total-silence case) ──
+function nudges(pushes: string[]): string[] {
+  return pushes.filter((p) => p.includes('was not delivered'));
+}
 
-describe('result-door fallback when the turn delivered nothing mid-turn', () => {
-  it('capability=true but ZERO text events: a deliverable result block is delivered, not stripped', async () => {
+// ── The result door never delivers: streaming-door misses degrade to the nudge ──
+
+describe('result door never delivers content — undelivered turns get the nudge', () => {
+  it('SDK drift (capability=true, ZERO text events): the result block is NOT written, the nudge fires', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
-      // SDK drift: the capability says text streams, but this turn emitted
-      // none — the result is the only carrier of the reply. Stripping it
-      // would be total silence with no log trail the user ever sees.
+      // The capability says text streams, but this turn emitted none — the
+      // result is the only carrier of the reply. The result door still does
+      // not send; the wrap-nudge asks the model to re-send, and the retry's
+      // text events go through the mid-turn door.
       yield { type: 'result', text: '<message to="discord-main">Only exists in the result.</message>' };
     }
     const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    expect(deliveredTexts()).toEqual(['Only exists in the result.']);
-    expect(pushes).toHaveLength(0);
+    expect(deliveredTexts()).toEqual([]);
+    expect(nudges(pushes)).toHaveLength(1);
   });
 
-  it('streamed text WITHOUT deliverable blocks + result WITH a block: fallback delivers once', async () => {
+  it('streamed text WITHOUT deliverable blocks + result WITH a block: nothing written, nudge fires', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
@@ -100,33 +105,68 @@ describe('result-door fallback when the turn delivered nothing mid-turn', () => 
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    expect(deliveredTexts()).toEqual(['The reply.']);
-    expect(pushes).toHaveLength(0);
+    expect(deliveredTexts()).toEqual([]);
+    expect(nudges(pushes)).toHaveLength(1);
   });
 
-  it('fallback resets per turn: a later drift turn still delivers after an earlier streamed turn', async () => {
+  it('a nudged retry that re-streams the block delivers it through the mid-turn door (the recovery loop)', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
-      // Turn 1: normal streaming — strip armed, one delivery.
       yield { type: 'init', continuation: 's1' };
-      yield { type: 'text', text: '<message to="discord-main">turn one</message>' };
-      yield { type: 'result', text: '<message to="discord-main">turn one</message>' };
-      // Turn 2: drift — no text events. midTurnSent was reset at the turn
-      // boundary, so the fallback must arm again.
-      yield { type: 'result', text: '<message to="discord-main">turn two</message>' };
+      // Turn 1: drift — block only in the result. Nudge fires.
+      yield { type: 'result', text: '<message to="discord-main">Lost in the drift.</message>' };
+      // The retry turn streams properly — mid-turn door delivers.
+      yield { type: 'text', text: '<message to="discord-main">Lost in the drift.</message>' };
+      yield { type: 'result', text: '<message to="discord-main">Lost in the drift.</message>' };
     }
-    const { query } = makeStubQuery(events());
+    const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    expect(deliveredTexts()).toEqual(['turn one', 'turn two']);
+    expect(deliveredTexts()).toEqual(['Lost in the drift.']);
+    expect(nudges(pushes)).toHaveLength(1);
+  });
+
+  it('the nudge decision resets per turn: a later drift turn nudges after an earlier delivered turn', async () => {
+    seedDest();
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      // Turn 1: normal streaming — one delivery, no nudge.
+      yield { type: 'init', continuation: 's1' };
+      yield { type: 'text', text: '<message to="discord-main">turn one</message>' };
+      yield { type: 'result', text: '<message to="discord-main">turn one</message>' };
+      // Turn 2: drift — no text events. The per-turn state was reset at the
+      // boundary, so this undelivered turn must nudge (and not deliver).
+      yield { type: 'result', text: '<message to="discord-main">turn two</message>' };
+    }
+    const { query, pushes } = makeStubQuery(events());
+
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
+
+    expect(deliveredTexts()).toEqual(['turn one']);
+    expect(nudges(pushes)).toHaveLength(1);
+  });
+
+  it('a repeat of the mid-turn delivery in the result is inert: no second write, no nudge', async () => {
+    seedDest();
+    const block = '<message to="discord-main">The answer is 4.</message>';
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      yield { type: 'init', continuation: 's1' };
+      yield { type: 'text', text: block };
+      yield { type: 'result', text: block };
+    }
+    const { query, pushes } = makeStubQuery(events());
+
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
+
+    expect(deliveredTexts()).toEqual(['The answer is 4.']);
+    expect(pushes).toHaveLength(0);
   });
 });
 
-// ── A2: multi-segment turns and partial-overlap results ──
+// ── Multi-segment turns: repeats in the result stay inert ──
 
-describe('multi-segment turns: strip against partial and full overlap', () => {
-  it('result repeating ALL segments blocks (not just the last) strips them all — each already delivered', async () => {
+describe('multi-segment turns: result overlap never re-delivers', () => {
+  it('result repeating ALL segments blocks: each delivered once at the door, result inert', async () => {
     seedDest();
     const a = '<message to="discord-main">segment A</message>';
     const b = '<message to="discord-main">segment B</message>';
@@ -144,7 +184,7 @@ describe('multi-segment turns: strip against partial and full overlap', () => {
     expect(pushes).toHaveLength(0);
   });
 
-  it('result carrying only the LAST segment: earlier deliveries stand, the repeat is stripped', async () => {
+  it('result carrying only the LAST segment: earlier deliveries stand, the repeat is inert', async () => {
     seedDest();
     const a = '<message to="discord-main">segment A</message>';
     const b = '<message to="discord-main">segment B</message>';
@@ -163,24 +203,40 @@ describe('multi-segment turns: strip against partial and full overlap', () => {
   });
 });
 
-// ── A3: interrupted / error turns ──
+// ── Error and interrupted turns ──
 
 describe('error and interrupted turns', () => {
-  it('error result whose block never streamed (errors[] shape), nothing sent mid-turn: fallback delivers', async () => {
+  it('error result whose block never streamed (errors[] shape), nothing sent mid-turn: no write, nudge fires', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
       yield { type: 'text', text: 'partial progress narration, unwrapped' };
       // The claude provider builds error-result text from the SDK's errors[]
-      // field — content that NEVER streamed as assistant text. If it carries
-      // a deliverable block, stripping it would silently eat the notice.
+      // field — content that NEVER streamed. The result door still does not
+      // send it as a block; with nothing delivered this turn the nudge asks
+      // for a proper re-send instead.
       yield { type: 'result', text: '<message to="discord-main">Run aborted: quota.</message>', isError: true };
     }
     const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    expect(deliveredTexts()).toEqual(['Run aborted: quota.']);
+    expect(deliveredTexts()).toEqual([]);
+    expect(nudges(pushes)).toHaveLength(1);
+  });
+
+  it('a bare (blockless) error result still surfaces via deliverErrorResult — the errors exception', async () => {
+    seedDest();
+    const errText = 'Spending limit reached. Add your own key at https://example.com/keys';
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      yield { type: 'init', continuation: 's1' };
+      yield { type: 'result', text: errText, isError: true };
+    }
+    const { query, pushes } = makeStubQuery(events());
+
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
+
+    expect(deliveredTexts()).toEqual([errText]);
     expect(pushes).toHaveLength(0);
   });
 
@@ -202,15 +258,14 @@ describe('error and interrupted turns', () => {
   });
 });
 
-// ── B: predicate timing — destinations changing intra-turn ──
+// ── Destinations changing between stream time and result time ──
 
 describe('destination set changes between stream time and result time', () => {
-  it('dest unknown at stream time but present at result time, nothing else delivered: fallback delivers', async () => {
+  it('dest unknown at stream time but present at result time, nothing else delivered: no write, nudge fires', async () => {
     // Destinations are live-queried from inbound.db (the host writes the
-    // table on demand, mid-session). A block skipped at the mid-turn door for
-    // unknown destination must not be strip-dropped at the result once the
-    // destination exists — with zero mid-turn deliveries the strip stays
-    // unarmed and the result door delivers.
+    // table on demand, mid-session). The result door does not deliver even
+    // once the destination exists — the nudge coaxes a re-send, and the
+    // retry's mid-turn scan sees the now-known destination.
     const block = '<message to="discord-main">Hello, new channel.</message>';
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
@@ -222,21 +277,16 @@ describe('destination set changes between stream time and result time', () => {
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    expect(deliveredTexts()).toEqual(['Hello, new channel.']);
-    expect(pushes).toHaveLength(0);
+    expect(deliveredTexts()).toEqual([]);
+    expect(nudges(pushes)).toHaveLength(1);
   });
 
-  it('KNOWN RESIDUAL (pinned): dest appears late while ANOTHER block already delivered — the late block is stripped', async () => {
-    // Stateless bound, accepted by design: once any block delivered mid-turn
-    // the strip is armed for the whole result, and without content-keyed
-    // state (or an outbound-DB consult per block) the result door cannot
-    // tell "already delivered at the door" from "skipped at the door for a
-    // reason that no longer holds". Reaching this shape requires a
-    // destination write landing inside the sub-second window between the
-    // last streamed segment and the result, in a turn that also delivered
-    // another block. If this trade-off is ever revisited, the exact fix is a
-    // per-block messages_out lookup (rows written since the turn started,
-    // same platform/channel, same content) instead of the structural strip.
+  it('KNOWN RESIDUAL (pinned): dest appears late while ANOTHER block already delivered — no delivery, no nudge', async () => {
+    // Accepted bound of the one-door contract: the turn DID deliver, so the
+    // nudge stays quiet, and the result door never sends — the late block is
+    // lost for this turn. Reaching this shape requires a destination write
+    // landing inside the sub-second window between the last streamed segment
+    // and the result, in a turn that also delivered another block.
     seedDest('discord-main');
     const known = '<message to="discord-main">to the known channel</message>';
     const late = '<message to="late-dest">to the late channel</message>';
@@ -246,12 +296,12 @@ describe('destination set changes between stream time and result time', () => {
       seedDest('late-dest', 'discord', 'chan-2'); // appears inside the window
       yield { type: 'result', text: `${known}\n${late}` };
     }
-    const { query } = makeStubQuery(events());
+    const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    // Only the known-at-stream-time block goes out; the late one is stripped.
     expect(deliveredTexts()).toEqual(['to the known channel']);
+    expect(nudges(pushes)).toHaveLength(0);
   });
 
   it('dest removed between stream and result: the delivered block is not re-sent and no nudge fires', async () => {
@@ -261,69 +311,42 @@ describe('destination set changes between stream time and result time', () => {
       yield { type: 'init', continuation: 's1' };
       yield { type: 'text', text: block }; // delivers
       removeDest('discord-main');
-      yield { type: 'result', text: block }; // result-door: unknown dest → dropped-note, no strip needed
+      yield { type: 'result', text: block }; // result-door: unknown dest → dropped-note; turn delivered → no nudge
     }
     const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['delivered before removal']);
-    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(0);
+    expect(nudges(pushes)).toHaveLength(0);
   });
 });
 
-// ── HALF-MESSAGES: blocks split across streamed text events ──
+// ── Half-messages: never-closed fragments are the nudge's job ──
 //
-// The claude provider emits ONE text event per assistant message (text blocks
-// joined) — a <message> block can still open in one assistant message and
-// close in a later one when a tool call rides between them. The mid-turn door
-// parses each event independently and keeps NO cross-event buffer, so a
-// cross-event block is never delivered mid-turn. Under the SDK premise the
-// result repeats only the LAST message's text, so the block is incomplete
-// there too — the wrap-nudge is the recovery path. If drift ever hands the
-// result a healed (complete) copy, the midTurnSent===0 fallback delivers it.
+// Blocks split across text events are ASSEMBLED and delivered mid-turn (see
+// poll-loop.midturn-assembly.test.ts). What assembly does NOT cover — a block
+// that never closes anywhere — stays undeliverable, and the wrap-nudge is
+// the recovery path when the turn delivered nothing.
 
-describe('half-messages: block split across streamed text events', () => {
-  it('no cross-event buffering: split block undelivered mid-turn; a tail-only result fires the wrap-nudge', async () => {
+describe('half-messages: never-closed fragments', () => {
+  it('a block that NEVER closes anywhere: nothing delivered, the wrap-nudge fires (nudge owns this case)', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
-      yield { type: 'text', text: '<message to="discord-main">part one, ' };
-      yield { type: 'text', text: 'part two</message>' };
-      // SDK premise: result = last assistant text = the tail, incomplete.
-      yield { type: 'result', text: 'part two</message>' };
+      yield { type: 'text', text: '<message to="discord-main">this stays open forever' };
+      // SDK premise: result = last assistant text = the same unclosed fragment.
+      yield { type: 'result', text: '<message to="discord-main">this stays open forever' };
     }
     const { query, pushes } = makeStubQuery(events());
 
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
-    // Nothing half-formed is ever delivered…
     expect(deliveredTexts()).toEqual([]);
-    // …and the turn is not silent: the wrap-nudge asks the agent to re-send.
-    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(1);
+    expect(nudges(pushes)).toHaveLength(1);
   });
 
-  it('healing drift: block incomplete in every streamed event but complete in the result → fallback delivers once', async () => {
-    seedDest();
-    async function* events(): AsyncGenerator<ProviderEvent> {
-      yield { type: 'init', continuation: 's1' };
-      yield { type: 'text', text: '<message to="discord-main">first half, ' };
-      yield { type: 'text', text: 'second half</message>' };
-      // Drift shape: the result carries the concatenation. No streamed event
-      // parsed a complete block (midTurnSent === 0), so the strip must stay
-      // unarmed and the result door must deliver — stripping here was the
-      // total-loss case.
-      yield { type: 'result', text: '<message to="discord-main">first half, second half</message>' };
-    }
-    const { query, pushes } = makeStubQuery(events());
-
-    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
-
-    expect(deliveredTexts()).toEqual(['first half, second half']);
-    expect(pushes).toHaveLength(0);
-  });
-
-  it('never-completed block alongside a delivered block: fragment stays scratchpad, no nudge, no loss of anything complete', async () => {
+  it('never-completed fragment alongside a delivered block: fragment dropped at turn end, no nudge, no loss of anything complete', async () => {
     seedDest();
     async function* events(): AsyncGenerator<ProviderEvent> {
       yield { type: 'init', continuation: 's1' };
@@ -336,9 +359,7 @@ describe('half-messages: block split across streamed text events', () => {
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual(['complete reply']);
-    // A block was delivered this turn — the unfinished fragment is treated as
-    // scratchpad, not as an undelivered reply.
-    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(0);
+    expect(nudges(pushes)).toHaveLength(0);
   });
 });
 
@@ -419,10 +440,41 @@ describe('cross-segment echo guard', () => {
   });
 });
 
-// ── C: failure ordering — mid-turn outbound write fails ──
+// ── MCP sends count as same-turn deliveries for the nudge decision ──
+
+describe('DB-visible sends gate the nudge', () => {
+  it('a chat row written this turn outside the door (MCP send_message shape) suppresses the nudge', async () => {
+    seedDest();
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      yield { type: 'init', continuation: 's1' };
+      // Simulate an MCP send_message call landing mid-turn: a chat row
+      // appears in outbound.db without going through the mid-turn door.
+      const { writeMessageOut } = await import('./db/messages-out.js');
+      writeMessageOut({
+        id: 'mcp-1',
+        kind: 'chat',
+        platform_id: 'chan-1',
+        channel_type: 'discord',
+        thread_id: null,
+        content: JSON.stringify({ text: 'sent via tool' }),
+      });
+      // Final text is an unwrapped self-summary — with a DB-visible send
+      // this turn, nudging would coax a redundant repeat.
+      yield { type: 'result', text: 'Told them via the tool.' };
+    }
+    const { query, pushes } = makeStubQuery(events());
+
+    await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
+
+    expect(deliveredTexts()).toEqual(['sent via tool']);
+    expect(nudges(pushes)).toHaveLength(0);
+  });
+});
+
+// ── Failure ordering — mid-turn outbound write fails ──
 
 describe('mid-turn delivery write failure', () => {
-  it('fails the turn loudly: processQuery rejects, the stream never reaches its result, nothing is strip-dropped', async () => {
+  it('fails the turn loudly: processQuery rejects, the stream never reaches its result, nothing is silently dropped', async () => {
     seedDest();
     let reachedResult = false;
     async function* events(): AsyncGenerator<ProviderEvent> {
@@ -440,19 +492,18 @@ describe('mid-turn delivery write failure', () => {
       processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true),
     ).rejects.toThrow();
 
-    // The turn died at the failed write: the result was never processed, so
-    // the block was NOT silently stripped as "already delivered" — the
-    // caller's error path (runPollLoop) surfaces the failure to the user.
+    // The turn died at the failed write: the result was never processed, and
+    // the caller's error path (runPollLoop) surfaces the failure to the user.
     expect(reachedResult).toBe(false);
     getOutboundDb().exec('ALTER TABLE messages_out_broken RENAME TO messages_out');
     expect(deliveredTexts()).toEqual([]);
   });
 });
 
-// ── D: result-door handling for blocks the mid-turn door skips ──
+// ── Door-skipped blocks keep base result-door handling ──
 
 describe('capability=true keeps base result-door handling for door-skipped blocks', () => {
-  it('unknown destination at both doors: dropped with the wrap-nudge, never silently stripped', async () => {
+  it('unknown destination at both doors: dropped with the wrap-nudge, never silently swallowed', async () => {
     // No destination seeded at all.
     const block = '<message to="nobody-home">is anyone there?</message>';
     async function* events(): AsyncGenerator<ProviderEvent> {
@@ -465,8 +516,6 @@ describe('capability=true keeps base result-door handling for door-skipped block
     await processQuery(query, CHAT_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, true);
 
     expect(deliveredTexts()).toEqual([]);
-    // The drop lands in the scratchpad and the turn counts as undelivered —
-    // the nudge (listing real destinations) is the base-behavior surface.
-    expect(pushes.filter((p) => p.includes('was not delivered'))).toHaveLength(1);
+    expect(nudges(pushes)).toHaveLength(1);
   });
 });

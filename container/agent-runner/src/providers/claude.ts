@@ -472,9 +472,9 @@ export class ClaudeProvider implements AgentProvider {
    * provider enforces: the result event's text is taken verbatim from the
    * SDK's own `result` / `errors[]` fields, which the provider cannot prove
    * equal to streamed content. The poll-loop keys its one-door mid-turn
-   * delivery on this flag and keeps a stateless fallback (deliver at the
-   * result door when the turn delivered nothing mid-turn) for premise
-   * violations.
+   * delivery on this flag; the result door never delivers content — if the
+   * streaming door missed everything (premise violation), the poll-loop
+   * fires the wrap-nudge so the model re-sends through the mid-turn door.
    */
   readonly emitsMidTurnText = true;
 

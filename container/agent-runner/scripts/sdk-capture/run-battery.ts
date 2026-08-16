@@ -149,6 +149,18 @@ const SCENARIOS: Scenario[] = [
     prompt: '<message from="discord-main">Send me a one-line message block saying "turn one".</message>',
     followUp: '<message from="discord-main">Now send me a one-line message block saying "turn two".</message>',
   },
+  {
+    id: 's15-midtoken-split',
+    gist: 'open tag literally split mid-token across assistant messages',
+    prompt:
+      '<message from="discord-main">Streaming protocol test — emit EXACTLY this sequence, no commentary: (1) the text `<mess` and NOTHING else (stop your text there), (2) a Bash call `echo tick`, (3) the text `age to="discord-main">reassembled greeting</message>` and nothing else. The tag is intentionally split mid-token; do not repair it in either step.</message>',
+  },
+  {
+    id: 's16-three-way-split',
+    gist: 'block spread across three assistant messages with two tool calls between',
+    prompt:
+      '<message from="discord-main">Streaming protocol test — emit EXACTLY this sequence, no commentary: (1) the text `<message to="discord-main">alpha ` and nothing else, (2) a Bash call `echo one`, (3) the text `beta ` and nothing else, (4) a Bash call `echo two`, (5) the text `gamma</message>` and nothing else. Do not merge the text steps.</message>',
+  },
 ];
 
 /** Push-based input stream (mirrors the provider's MessageStream). */
