@@ -124,6 +124,31 @@ describe('multi-message chat batches', () => {
   });
 });
 
+describe('structured chat links', () => {
+  it('preserves a link target hidden by shortened display text', () => {
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Joel',
+      text: 'read example.com/assets/…/review',
+      links: [{ url: 'https://example.com/assets/a_123/review?x=1&y=2' }],
+    });
+
+    const result = formatMessages(getPendingMessages());
+
+    expect(result).toContain(
+      'read example.com/assets/…/review\n[link: https://example.com/assets/a_123/review?x=1&amp;y=2]',
+    );
+  });
+
+  it('does not repeat a link already present in message text', () => {
+    const url = 'https://example.com/full-path';
+    insertMessage('m1', 'chat-sdk', { sender: 'Joel', text: `read ${url}`, links: [{ url }] });
+
+    const result = formatMessages(getPendingMessages());
+
+    expect(result.match(/https:\/\/example\.com\/full-path/g)).toHaveLength(1);
+  });
+});
+
 describe('timestamp formatting', () => {
   it('renders time via formatLocalTime (user TZ)', () => {
     // 2026-06-15T12:00:00Z — timezone-agnostic assertions (year is stable)
