@@ -179,12 +179,13 @@ function formatSingleChat(msg: MessageInRow): string {
   const idAttr = msg.seq != null ? ` id="${msg.seq}"` : '';
   const replyAttr = content.replyTo?.id ? ` reply_to="${escapeXml(String(content.replyTo.id))}"` : '';
   const replyPrefix = formatReplyContext(content.replyTo);
+  const linksSuffix = formatLinks(content.links, text);
   const attachmentsSuffix = formatAttachments(content.attachments);
   const appContextSuffix = formatAppContext(content.app_context);
 
   const fromAttr = originAttr(msg);
 
-  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${attachmentsSuffix}${appContextSuffix}</message>`;
+  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${linksSuffix}${attachmentsSuffix}${appContextSuffix}</message>`;
 }
 
 /**
@@ -287,6 +288,19 @@ function formatAppContext(appContext: any): string {
     .map((e: any) => `${e.type} ${e.id}`);
   if (items.length === 0) return '';
   return `\n(viewing: ${escapeXml(items.join(', '))})`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatLinks(links: any[] | undefined, text: string): string {
+  if (!Array.isArray(links) || links.length === 0) return '';
+  const urls = [
+    ...new Set(
+      links.flatMap((link) =>
+        typeof link?.url === 'string' && link.url && !text.includes(link.url) ? [link.url] : [],
+      ),
+    ),
+  ];
+  return urls.length === 0 ? '' : `\n${urls.map((url) => `[link: ${escapeXml(url)}]`).join('\n')}`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
