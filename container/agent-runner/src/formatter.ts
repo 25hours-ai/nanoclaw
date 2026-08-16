@@ -180,10 +180,11 @@ function formatSingleChat(msg: MessageInRow): string {
   const replyAttr = content.replyTo?.id ? ` reply_to="${escapeXml(String(content.replyTo.id))}"` : '';
   const replyPrefix = formatReplyContext(content.replyTo);
   const attachmentsSuffix = formatAttachments(content.attachments);
+  const appContextSuffix = formatAppContext(content.app_context);
 
   const fromAttr = originAttr(msg);
 
-  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${attachmentsSuffix}</message>`;
+  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${attachmentsSuffix}${appContextSuffix}</message>`;
 }
 
 /**
@@ -268,6 +269,24 @@ function formatReplyContext(replyTo: any): string {
   const text = replyTo.text;
   if (!sender || !text) return '';
   return `\n  <quoted_message from="${escapeXml(sender)}">${escapeXml(text)}</quoted_message>\n`;
+}
+
+/**
+ * Render agent-mode app context — the entities the user was viewing when
+ * they sent this message (content.app_context = { entities: [{ type, id },
+ * …] }, attached by the chat-sdk bridge). One compact line inside the
+ * message block; malformed/empty context renders nothing.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatAppContext(appContext: any): string {
+  if (!appContext || !Array.isArray(appContext.entities)) return '';
+  const items = appContext.entities
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((e: any) => typeof e?.type === 'string' && e.type && typeof e?.id === 'string' && e.id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((e: any) => `${e.type} ${e.id}`);
+  if (items.length === 0) return '';
+  return `\n(viewing: ${escapeXml(items.join(', '))})`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

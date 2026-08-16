@@ -247,3 +247,53 @@ describe('stripInternalTags', () => {
     );
   });
 });
+
+describe('app_context rendering (Slack agent mode, contract C4)', () => {
+  it('renders a compact single (viewing: …) line inside the message block', () => {
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Gavriel',
+      text: 'what do you think?',
+      app_context: { entities: [{ type: 'channel', id: 'C0DESIGN' }] },
+    });
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('what do you think?\n(viewing: channel C0DESIGN)</message>');
+  });
+
+  it('joins multiple entities in order with commas', () => {
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'Gavriel',
+      text: 'here',
+      app_context: {
+        entities: [
+          { type: 'channel', id: 'C0DESIGN' },
+          { type: 'canvas', id: 'F0CANVAS' },
+        ],
+      },
+    });
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('(viewing: channel C0DESIGN, canvas F0CANVAS)');
+  });
+
+  it('renders nothing for absent, empty, or malformed app_context', () => {
+    insertMessage('m1', 'chat-sdk', { sender: 'A', text: 'no context' });
+    insertMessage('m2', 'chat-sdk', { sender: 'A', text: 'empty', app_context: { entities: [] } });
+    insertMessage('m3', 'chat-sdk', { sender: 'A', text: 'malformed', app_context: 'C0DESIGN' });
+    insertMessage('m4', 'chat-sdk', {
+      sender: 'A',
+      text: 'idless',
+      app_context: { entities: [{ type: 'channel' }] },
+    });
+    const result = formatMessages(getPendingMessages());
+    expect(result).not.toContain('(viewing:');
+  });
+
+  it('escapes XML-significant characters in entity values', () => {
+    insertMessage('m1', 'chat-sdk', {
+      sender: 'A',
+      text: 'x',
+      app_context: { entities: [{ type: 'channel', id: 'C1<&>' }] },
+    });
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('(viewing: channel C1&lt;&amp;&gt;)');
+  });
+});
