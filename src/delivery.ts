@@ -30,6 +30,7 @@ import {
   markDelivered,
   markDeliveryFailed,
   migrateDeliveredTable,
+  type OutboundMessage,
 } from './db/session-db.js';
 import { runGuarded, type DeliveryGuardSpec, type GuardedDeliveryHandler } from './delivery-guard.js';
 import { isUnguarded, type Unguarded } from './guard/index.js';
@@ -232,6 +233,11 @@ async function drainSession(session: Session): Promise<void> {
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
+        // firstDelivery: nothing had ever been delivered in this session
+        // before this row. Computed before the row joins the local
+        // delivered set, so exactly one row per session carries the flag.
+        const firstDelivery = delivered.size === 0;
+        delivered.add(msg.id);
         deliveryAttempts.delete(msg.id);
 
         // Pause the typing indicator after a real user-facing message
@@ -249,6 +255,16 @@ async function drainSession(session: Session): Promise<void> {
           // retry never double-fans.
           if (msg.kind !== 'task_log') {
             fanOutboundMessage(msg, session, agentGroup);
+            // Post-delivery hooks: user-facing rows only, same exclusions
+            // as the fan above. Hooks are decoration: failures log and can
+            // never affect delivery or retries.
+            for (const hook of postDeliveryHooks) {
+              try {
+                hook(msg, session, { firstDelivery });
+              } catch (err) {
+                log.warn('Post-delivery hook failed', { messageId: msg.id, sessionId: session.id, err });
+              }
+            }
           }
         }
       } catch (err) {
@@ -464,6 +480,37 @@ async function deliverMessage(
   clearOutbox(session.agent_group_id, session.id, msg.id);
 
   return platformMsgId;
+}
+
+/**
+ * Post-delivery hooks.
+ *
+ * Registered modules observe each successfully delivered user-facing
+ * message (non-system, non-agent, non-task_log) right after it is marked
+ * delivered, with a first-delivery flag. This gives channel modules a
+ * supported seam for one-time follow-through on a session's first outbound
+ * message (e.g. onboarding affordances) without hardcoding platform
+ * behavior in the delivery core.
+ *
+ * Hooks are decoration only: each invocation is wrapped in try/catch, so a
+ * failing hook can never affect delivery, markDelivered, or retries.
+ */
+export interface PostDeliveryInfo {
+  /**
+   * True when this is the first message ever marked delivered in this
+   * session — exactly one row per session carries it. Every delivered row
+   * counts toward the flag (including system rows the hook itself never
+   * fires for); the hook only ever observes user-facing rows.
+   */
+  firstDelivery: boolean;
+}
+
+export type PostDeliveryHook = (msg: OutboundMessage, session: Session, info: PostDeliveryInfo) => void;
+
+const postDeliveryHooks: PostDeliveryHook[] = [];
+
+export function registerPostDeliveryHook(hook: PostDeliveryHook): void {
+  postDeliveryHooks.push(hook);
 }
 
 /**
