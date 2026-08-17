@@ -33,5 +33,11 @@ export {
   type EchoWireSurface,
 } from './fan.js';
 export { pruneEchoBacklog } from './prune.js';
-export { HISTORY_DEFAULT_LIMIT, HISTORY_TEXT_MAX_CHARS, sessionHistory } from './history.js';
+export {
+  formatHistoryLines,
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_TEXT_MAX_CHARS,
+  sessionHistory,
+  type HistoryRow,
+} from './history.js';
 export { backfillNewDmSession, BACKFILL_LIMIT } from './backfill.js';

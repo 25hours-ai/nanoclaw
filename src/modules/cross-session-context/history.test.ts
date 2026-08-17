@@ -15,7 +15,7 @@ import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/i
 import { createSession } from '../../db/sessions.js';
 import { initSessionFolder, writeOutboundDirect, writeSessionMessage } from '../../session-manager.js';
 import type { CallerContext } from '../../cli/frame.js';
-import { sessionHistory } from './history.js';
+import { formatHistoryLines, sessionHistory } from './history.js';
 
 const TEST_DIR = '/tmp/nanoclaw-test-cross-session-history';
 const AG = 'ag-hist';
@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 describe('sessionHistory', () => {
-  it('merges inbound + outbound chronologically as pipe-separated lines', () => {
+  it('merges inbound + outbound chronologically as structured rows (ISO timestamps)', () => {
     writeInbound('in-1', '2026-08-01T10:00:00.000Z', 'hello there');
     writeInbound('in-2', '2026-08-01T10:02:00.000Z', 'second message');
     // writeOutboundDirect stamps now() — always sorts after the fixed 2026 stamps.
@@ -87,30 +87,46 @@ describe('sessionHistory', () => {
       content: JSON.stringify({ text: 'agent reply' }),
     });
 
-    const lines = sessionHistory({ id: SESS }, HOST).split('\n');
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toBe('2026-08-01T10:00:00.000Z|in|chat|Gavriel|hello there');
-    expect(lines[1]).toBe('2026-08-01T10:02:00.000Z|in|chat|Gavriel|second message');
-    const out = lines[2].split('|');
-    expect(out[1]).toBe('out');
-    expect(out[2]).toBe('chat');
-    expect(out[3]).toBe('Pixel'); // agent group name as outbound sender
-    expect(out[4]).toBe('agent reply');
+    const rows = sessionHistory({ id: SESS }, HOST);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toEqual({
+      timestamp: '2026-08-01T10:00:00.000Z',
+      direction: 'in',
+      kind: 'chat',
+      sender: 'Gavriel',
+      text: 'hello there',
+    });
+    expect(rows[1].text).toBe('second message');
+    expect(rows[2].direction).toBe('out');
+    expect(rows[2].kind).toBe('chat');
+    expect(rows[2].sender).toBe('Pixel'); // agent group name as outbound sender
+    expect(rows[2].text).toBe('agent reply');
+  });
+
+  it('formatHistoryLines renders pipe lines with localized stamps and capped cells', () => {
+    writeInbound('in-1', '2026-08-01T10:00:00.000Z', 'hello there');
+    const lines = formatHistoryLines(sessionHistory({ id: SESS }, HOST), 'UTC').split('\n');
+    expect(lines).toEqual(['2026-08-01 10:00|in|chat|Gavriel|hello there']);
+    // A non-UTC install timezone shifts the human stamp; data stays ISO.
+    const berlin = formatHistoryLines(sessionHistory({ id: SESS }, HOST), 'Europe/Berlin');
+    expect(berlin.startsWith('2026-08-01 12:00|')).toBe(true);
   });
 
   it('applies --limit keeping the NEWEST rows', () => {
     for (let i = 0; i < 5; i++) {
       writeInbound(`in-${i}`, `2026-08-01T10:0${i}:00.000Z`, `msg ${i}`);
     }
-    const lines = sessionHistory({ id: SESS, limit: 2 }, HOST).split('\n');
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('msg 3');
-    expect(lines[1]).toContain('msg 4');
+    const rows = sessionHistory({ id: SESS, limit: 2 }, HOST);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text).toBe('msg 3');
+    expect(rows[1].text).toBe('msg 4');
   });
 
-  it('sanitizes newlines and pipes out of the text cell', () => {
+  it('sanitizes newlines and pipes in the human rendering only — rows keep the raw text', () => {
     writeInbound('in-1', '2026-08-01T10:00:00.000Z', 'line one\nline two | with pipe');
-    const line = sessionHistory({ id: SESS }, HOST);
+    const rows = sessionHistory({ id: SESS }, HOST);
+    expect(rows[0].text).toBe('line one\nline two | with pipe');
+    const line = formatHistoryLines(rows, 'UTC');
     expect(line.split('\n')).toHaveLength(1);
     expect(line.endsWith('line one line two / with pipe')).toBe(true);
   });
@@ -124,7 +140,7 @@ describe('sessionHistory', () => {
 
   it('allows the owning agent group and the host', () => {
     writeInbound('in-1', '2026-08-01T10:00:00.000Z', 'visible');
-    expect(sessionHistory({ id: SESS }, OWN_AGENT)).toContain('visible');
-    expect(sessionHistory({ id: SESS }, HOST)).toContain('visible');
+    expect(sessionHistory({ id: SESS }, OWN_AGENT)[0].text).toBe('visible');
+    expect(sessionHistory({ id: SESS }, HOST)[0].text).toBe('visible');
   });
 });

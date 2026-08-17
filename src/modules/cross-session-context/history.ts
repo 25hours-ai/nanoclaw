@@ -1,7 +1,7 @@
 /**
  * `ncl sessions history <session-id>` — the pull layer of cross-session
- * context (plan 01): full-depth catch-up on another conversation after the
- * push layer's one-line ambient copies.
+ * context: full-depth catch-up on another conversation after the push
+ * layer's one-line ambient copies.
  *
  * Reads the target session's inbound messages_in + outbound messages_out
  * (both read-only; safe with a live container) merged chronologically.
@@ -13,16 +13,19 @@
  */
 import fs from 'fs';
 
+import { TIMEZONE } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getSession } from '../../db/sessions.js';
 import { inboundDbPath, openOutboundDb, withInboundDb } from '../../session-manager.js';
+import { formatLocalStamp } from '../../timezone.js';
 import type { CallerContext } from '../../cli/frame.js';
 
 export const HISTORY_DEFAULT_LIMIT = 50;
-/** Per-line text cap in the pipe-separated output. */
+/** Per-line text cap in the human pipe-separated rendering. */
 export const HISTORY_TEXT_MAX_CHARS = 200;
 
-interface HistoryRow {
+export interface HistoryRow {
+  /** ISO-8601 UTC on the wire; the human renderer localizes. */
   timestamp: string;
   direction: 'in' | 'out';
   kind: string;
@@ -53,11 +56,12 @@ function parseText(raw: string): { text: string; sender: string | null } {
 
 /**
  * Handler for the sessions `history` custom operation. Returns the merged
- * transcript as pipe-separated lines:
- *   timestamp|direction(in/out)|kind|sender|text(first 200 chars)
- * newest `limit` rows, chronological order.
+ * transcript as structured rows (newest `limit`, chronological order) —
+ * the frame `data`, so `--json` callers get real rows with ISO timestamps.
+ * Human rendering (pipe lines, localized stamps, capped cells) lives in
+ * `formatHistoryLines`, wired as the operation's `formatHuman`.
  */
-export function sessionHistory(args: Record<string, unknown>, ctx: CallerContext): string {
+export function sessionHistory(args: Record<string, unknown>, ctx: CallerContext): HistoryRow[] {
   const sessionId = typeof args.id === 'string' && args.id.length > 0 ? args.id : undefined;
   if (!sessionId) throw new Error('session id is required');
   const limitRaw = Number(args.limit ?? HISTORY_DEFAULT_LIMIT);
@@ -100,7 +104,20 @@ export function sessionHistory(args: Record<string, unknown>, ctx: CallerContext
   }
 
   rows.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
-  const newest = rows.slice(-limit);
+  return rows.slice(-limit);
+}
 
-  return newest.map((r) => `${r.timestamp}|${r.direction}|${r.kind}|${cell(r.sender)}|${cell(r.text)}`).join('\n');
+/**
+ * Human rendering: pipe-separated lines
+ *   timestamp|direction(in/out)|kind|sender|text(first 200 chars)
+ * with the timestamp in the install timezone (`timezone` injectable for
+ * deterministic tests). `--json` bypasses this and gets the raw rows.
+ */
+export function formatHistoryLines(rows: HistoryRow[], timezone: string = TIMEZONE): string {
+  return rows
+    .map(
+      (r) =>
+        `${formatLocalStamp(new Date(r.timestamp), timezone)}|${r.direction}|${r.kind}|${cell(r.sender)}|${cell(r.text)}`,
+    )
+    .join('\n');
 }
