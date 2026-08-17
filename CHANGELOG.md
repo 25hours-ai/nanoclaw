@@ -4,6 +4,7 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+- **`/add-codex` now pins `@openai/codex` 0.146.0.** The previous pin (0.138.0) defaults to GPT-5.4, which OpenAI retires from Codex on 2026-08-31 — codex-provider agents ride the CLI default model, so stock installs stop completing turns at retirement — and it rejects the newer GPT-5.6 models with a 400 asking for a newer Codex CLI. Existing codex installs are not re-pinned by re-running `/add-codex` (the manifest merge is keyed on package name): edit the `@openai/codex` entry in `container/cli-tools.json` to `0.146.0`, rebuild the agent image (`./container/build.sh`), and restart.
 - **New NanoClaw installs now use OneCLI gateway 1.41.0.** Existing 1.36.0 gateways remain compatible because NanoClaw does not depend on any 1.41-only behavior. See [the OneCLI upgrade guide](docs/onecli-upgrades.md) to upgrade an existing gateway.
 
 ## [2.2.0] - 2026-08-13
