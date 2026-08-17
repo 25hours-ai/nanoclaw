@@ -12,7 +12,7 @@ Files you create are saved in `/workspace/agent/`. Use this for notes, research,
 
 Files sent to you arrive at **`/workspace/inbox/<message-id>/<filename>`**, and the message names the exact path: `[image: photo.jpg — saved to /workspace/inbox/.../photo.jpg]`. Read that path directly.
 
-`/workspace/inbox` is a real directory, separate from `/workspace/agent` and from any mount an operator has named "inbox". When you are told a file was saved somewhere, trust the path you were given over your own assumptions about which directories exist — try reading it before reporting the file missing.
+`/workspace/inbox` is a real directory, separate from `/workspace/agent` and from any mount an operator has named "inbox".
 
 ## Memory
 
