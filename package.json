@@ -16,6 +16,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:fix": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
+    "stdin-json:generate": "sh scripts/sync-stdin-json.sh",
+    "stdin-json:check": "sh scripts/sync-stdin-json.sh --check",
     "prepare": "husky",
     "setup": "tsx setup/index.ts",
     "setup:auto": "tsx setup/auto.ts",

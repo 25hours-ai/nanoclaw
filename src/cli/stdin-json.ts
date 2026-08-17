@@ -1,16 +1,3 @@
-/**
- * Bounded JSON-over-stdin for the ncl CLI (`--stdin-json`).
- *
- * This module exists as two byte-identical copies:
- *   - src/cli/stdin-json.ts                        (host CLI, Node)
- *   - container/agent-runner/src/cli/stdin-json.ts (container CLI, Bun)
- *
- * The container CLI cannot import from src/ (separate package tree, separate
- * runtime), so the copy is deliberate — same pattern as timezone.ts. A sync
- * test on the host side (src/cli/stdin-json.test.ts) fails if the copies
- * drift: edit both files together.
- */
-
 /** Maximum structured CLI input accepted from stdin (64 KiB, measured as UTF-8 bytes). */
 export const MAX_STDIN_JSON_BYTES = 64 * 1024;
 

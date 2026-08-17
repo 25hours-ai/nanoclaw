@@ -1,6 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -10,16 +8,6 @@ import { MAX_STDIN_JSON_BYTES, readStdinJsonArgs, type StdinJsonStream } from '.
 async function* stream(...chunks: Array<string | Uint8Array>): StdinJsonStream {
   for (const chunk of chunks) yield chunk;
 }
-
-// The container CLI carries a deliberate copy of this module (it cannot import
-// from src/ — separate package tree, separate runtime). This guard fails the
-// build if the copies drift; edit both files together.
-it('container stdin-json.ts is a byte-identical mirror of the host module', () => {
-  const hostPath = fileURLToPath(new URL('./stdin-json.ts', import.meta.url));
-  const containerPath = fileURLToPath(new URL('../../container/agent-runner/src/cli/stdin-json.ts', import.meta.url));
-
-  expect(fs.readFileSync(containerPath, 'utf8')).toBe(fs.readFileSync(hostPath, 'utf8'));
-});
 
 describe('bounded stdin JSON', () => {
   it('merges one chunked JSON object into argv args', async () => {
