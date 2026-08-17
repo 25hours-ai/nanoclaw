@@ -19,7 +19,11 @@ import {
 import { appendRunLog } from './modules/scheduling/run-log.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroup, getMessagingGroupByPlatform } from './db/messaging-groups.js';
+import {
+  getMessagingGroup,
+  getMessagingGroupByPlatform,
+  getMessagingGroupForOwnDestination,
+} from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -29,6 +33,7 @@ import {
 } from './db/session-db.js';
 import { runGuarded, type DeliveryGuardSpec, type GuardedDeliveryHandler } from './delivery-guard.js';
 import { isUnguarded, type Unguarded } from './guard/index.js';
+import { fanOutboundMessage } from './modules/cross-session-context/index.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
@@ -237,6 +242,14 @@ async function drainSession(session: Session): Promise<void> {
         // shouldn't get a gap in their typing indicator for them.
         if (msg.kind !== 'system' && msg.channel_type !== 'agent') {
           pauseTypingRefreshAfterDelivery(session.id);
+          // Cross-session context: fan the agent's own user-facing message
+          // into the sessions of the conversation it was delivered to.
+          // task_log rows are series bookkeeping (one-door delivery), not
+          // user-facing — excluded. Runs after markDelivered so a delivery
+          // retry never double-fans.
+          if (msg.kind !== 'task_log') {
+            fanOutboundMessage(msg, session, agentGroup);
+          }
         }
       } catch (err) {
         const attempts = (deliveryAttempts.get(msg.id) ?? 0) + 1;
@@ -346,14 +359,27 @@ async function deliverMessage(
     // targets the session's own chat address, the origin row wins even if
     // sibling instances share the same (channel_type, platform_id) — so the
     // reply goes out through the instance the message came in on. Otherwise
-    // fall back to the by-platform lookup (default-instance-first).
+    // prefer the sender's own destination-mapped instance (correct even when
+    // sibling instances share the same channel address), falling back to the
+    // by-platform lookup (default-instance-first) when the sender has no
+    // matching destination.
     const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
     const mg =
       originMg && originMg.channel_type === msg.channel_type && originMg.platform_id === msg.platform_id
         ? originMg
-        : getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
+        : (getMessagingGroupForOwnDestination(session.agent_group_id, msg.channel_type, msg.platform_id) ??
+          getMessagingGroupByPlatform(msg.channel_type, msg.platform_id));
     if (!mg) {
       throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
+    }
+    if (mg.detached_at) {
+      // The bot was removed from this conversation (a channel membership
+      // module stamps detached_at when the bot leaves). Fail into the retry
+      // path rather than sending into a channel that will reject us; rejoin
+      // clears the stamp.
+      throw new Error(
+        `messaging group ${mg.id} is detached (bot removed from ${mg.channel_type}/${mg.platform_id} at ${mg.detached_at})`,
+      );
     }
     const isOriginChat = session.messaging_group_id === mg.id;
     // Guarded: without the agent-to-agent module, `agent_destinations`

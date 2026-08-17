@@ -28,6 +28,7 @@ import {
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
 import { findSessionForAgent } from './db/sessions.js';
+import { backfillNewDmSession, fanInboundMessage } from './modules/cross-session-context/index.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
@@ -504,8 +505,17 @@ async function deliverToAgent(
     }
   }
 
+  if (wake && created) {
+    // New-session backfill (cross-session context): a just-born DM session is
+    // seeded with the DM's top-level timeline from sibling sessions BEFORE
+    // the triggering message is written, so replying to something said in
+    // another conversation thread lands with that context in view.
+    backfillNewDmSession(agentGroup, session, mg);
+  }
+
+  const messageId = messageIdForAgent(event.message.id, agent.agent_group_id);
   writeSessionMessage(session.agent_group_id, session.id, {
-    id: messageIdForAgent(event.message.id, agent.agent_group_id),
+    id: messageId,
     kind: event.message.kind,
     timestamp: event.message.timestamp,
     platformId: deliveryAddr.platformId,
@@ -514,6 +524,22 @@ async function deliverToAgent(
     content: event.message.content,
     trigger: wake ? 1 : 0,
   });
+
+  if (wake) {
+    // Cross-session context: fan the triggering message into sibling
+    // sessions of the SAME conversation as trigger=0 'session-echo' rows.
+    // Only the engaged branch fans — the accumulate branch above (trigger=0)
+    // never does, so ambient backlog is never copied twice. Never throws.
+    fanInboundMessage({
+      session,
+      mg,
+      messageId,
+      kind: event.message.kind,
+      channelType: deliveryAddr.channelType,
+      content: event.message.content,
+      timestamp: event.message.timestamp,
+    });
+  }
 
   log.info('Message routed', {
     sessionId: session.id,
