@@ -18,6 +18,8 @@ import {
   updateContainerConfigScalars,
   updateContainerConfigJson,
 } from '../../db/container-configs.js';
+import { getSessionDriver } from '../../drivers/index.js';
+import { assertValidGroupFolder } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { createAgentFromTemplate } from '../../templates/create-agent.js';
 import {
@@ -155,6 +157,10 @@ registerResource({
         }
         const folder = args.folder as string;
         if (!folder) throw new Error('--folder is required');
+        // The template path validates through createAgentFromTemplate; the bare
+        // path used to validate nowhere, minting folders the runtime label
+        // grammar refuses at every spawn.
+        assertValidGroupFolder(folder);
         const name = (args.name as string) ?? folder;
         const existing = getAgentGroupByFolder(folder);
         if (existing) {
@@ -284,6 +290,19 @@ registerResource({
         const id = (args.id as string) || (ctx.caller === 'agent' ? ctx.agentGroupId : undefined);
         if (!id) throw new Error('--id is required');
         if (args.rebuild) {
+          // Refuse the WHOLE command in the payload (this command exits 0 even
+          // on a nonexistent group id) and restart nothing: the operator asked
+          // for rebuild-then-restart, and restarting after silently skipping
+          // the rebuild would report success for a rebuild that never happened.
+          if (!getSessionDriver().capabilities().imageBuild) {
+            return {
+              restarted: 0,
+              rebuilt: false,
+              error:
+                "the session runtime does not declare the 'imageBuild' capability; " +
+                '--rebuild cannot run here — image changes must be built and imported out of band',
+            };
+          }
           await buildAgentGroupImage(id);
         }
         const message = args.message as string | undefined;
