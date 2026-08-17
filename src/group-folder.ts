@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 import { GROUPS_DIR } from './config.js';
@@ -44,4 +45,30 @@ export function resolveGroupFolderPath(folder: string): string {
   const groupPath = path.resolve(GROUPS_DIR, folder);
   ensureWithinBase(GROUPS_DIR, groupPath);
   return groupPath;
+}
+
+/**
+ * True when `groups/<folder>` is present on disk in any form — directory,
+ * file, or symlink, empty or not. Every creation path writes the DB row
+ * before mkdir, so presence with no claiming row is exactly deleted-group
+ * residue (delete never removes the folder) or an operator-placed dir.
+ *
+ * Confinement-only on purpose: this deliberately does NOT go through
+ * resolveGroupFolderPath/assertValidGroupFolder. Occupancy must be probed for
+ * names the current grammar refuses too — a legacy folder minted before the
+ * grammar tightened still occupies its name, and refusing to LOOK would let a
+ * create mint a new identity over its data.
+ */
+export function groupFolderExistsOnDisk(folder: string): boolean {
+  const groupPath = path.resolve(GROUPS_DIR, folder);
+  ensureWithinBase(GROUPS_DIR, groupPath);
+  // lstat, not existsSync: existsSync follows symlinks, so a dangling symlink
+  // at groups/<folder> would read as absent even though it occupies the name
+  // (mkdir would fail on it). lstat probes the entry itself.
+  try {
+    fs.lstatSync(groupPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
