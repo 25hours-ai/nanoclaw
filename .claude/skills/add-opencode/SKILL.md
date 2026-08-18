@@ -31,6 +31,8 @@ container/agent-runner/src/providers/opencode.memory.test.ts
 container/agent-runner/src/providers/opencode.question.test.ts
 ```
 
+(`cwd-shim.ts` and its test are deliberately **not** in this payload even though `mcp-to-opencode.ts` imports the shim: trunk ships and owns them — the default provider imports `cwd-shim.ts` — and every path listed here becomes a skill-owned file that removal deletes.)
+
 ### 2. Register the provider in both runtimes
 
 Each barrel gets one line appended at the end — skip if the line is already present.
