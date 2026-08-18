@@ -4,7 +4,7 @@
 2. Delete `src/channels/dial.ts` and `src/channels/dial-registration.test.ts`
 3. Unregister the inbound command target (optional): `dial local-target remove "$PWD/data/dial/handle-dial-event.sh"`
 4. Remove the spool/handler artifacts (optional): `rm -rf data/dial`
-5. Remove any `DIAL_*` overrides from `.env` (and `data/env/env`)
+5. Remove any `DIAL_*` overrides from `.env`
 6. `pnpm uninstall @getdial/sdk`
 7. Rebuild and restart
 
