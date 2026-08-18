@@ -76,7 +76,29 @@ function fakeCore(): ProvisioningCore {
     }),
     readInstallToken: vi.fn(() => state.installToken),
     readManagerToken: vi.fn(() => undefined),
+    readServiceBase: vi.fn(() => 'https://slack.nanoclaw.dev'),
   };
+}
+
+/**
+ * Restore the shared mocks' default behaviour. `vi.clearAllMocks` only drops
+ * recorded calls, so a `mockRejectedValue` left by one test would otherwise be
+ * the next test's starting state.
+ */
+function resetBrokerMocks(): void {
+  state.runInheritScript.mockReset();
+  state.runInheritScript.mockImplementation(async () => 0);
+  state.brokerListWorkspaces.mockReset();
+  state.brokerListWorkspaces.mockImplementation(async () => [
+    { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' },
+  ]);
+  state.brokerProvision.mockReset();
+  state.brokerProvision.mockImplementation(async () => ({
+    appId: 'A0APP123',
+    appToken: 'xapp-test',
+    botToken: 'xoxb-test',
+    installUrl: '',
+  }));
 }
 
 /** A root where the module already sits at its installed-tree path. */
@@ -190,6 +212,7 @@ describe('provisioning-core bootstrap', () => {
 describe('Slack managed-app sign-in', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetBrokerMocks();
     state.notes.length = 0;
     state.warns.length = 0;
     state.installToken = 'nct-saved';
@@ -205,7 +228,10 @@ describe('Slack managed-app sign-in', () => {
     const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
 
     expect(state.runInheritScript).toHaveBeenCalledOnce();
-    expect(state.runInheritScript).toHaveBeenCalledWith('bash', ['setup/registry-login.sh']);
+    // --require-verified: a credential the driver merely kept, because it
+    // could not reach the account service to check, must not come back as a
+    // success here — this flow is about to spend it.
+    expect(state.runInheritScript).toHaveBeenCalledWith('bash', ['setup/registry-login.sh', '--require-verified']);
     expect(state.brokerListWorkspaces).toHaveBeenCalledWith('nct-saved');
     expect(result).toMatchObject({
       connection: 'provisioned',
@@ -226,5 +252,80 @@ describe('Slack managed-app sign-in', () => {
     ]);
     expect(state.notes[0].message).not.toContain('password');
     expect(state.notes[0].message).not.toContain('secret');
+  });
+});
+
+describe('a credential the Slack service refuses', () => {
+  const refusal = (): FakeBrokerHttpError => new FakeBrokerHttpError(401, '/v1/workspaces');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBrokerMocks();
+    state.notes.length = 0;
+    state.warns.length = 0;
+    state.installToken = 'nct-stale';
+    state.account = { token: 'nct-stale', api: 'https://registry.sandbox.nanoclaw.dev' };
+  });
+
+  it('re-authenticates once with --force and retries with the fresh token', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.brokerListWorkspaces.mockRejectedValueOnce(refusal());
+    // Only the second sign-in produces a new credential; the first is the
+    // ordinary pass-through that hands back what was already on disk.
+    state.runInheritScript
+      .mockImplementationOnce(async () => 0)
+      .mockImplementationOnce(async () => {
+        state.installToken = 'nct-fresh';
+        return 0;
+      });
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.runInheritScript.mock.calls).toEqual([
+      ['bash', ['setup/registry-login.sh', '--require-verified']],
+      ['bash', ['setup/registry-login.sh', '--require-verified', '--force']],
+    ]);
+    expect(state.brokerListWorkspaces.mock.calls).toEqual([['nct-stale'], ['nct-fresh']]);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', { team_id: 'T0TEAM123', name: 'Trusty' });
+    expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test' });
+    expect(state.notes.at(-1)?.message).toContain('would not accept the saved credentials');
+  });
+
+  it('names both services rather than reporting an outage when the retry is refused too', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.brokerListWorkspaces.mockRejectedValue(refusal());
+
+    await expect(maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core })).resolves.toBeUndefined();
+
+    expect(state.runInheritScript).toHaveBeenCalledTimes(2);
+    expect(state.warns.at(-1)).toContain(
+      'Credentials from https://registry.sandbox.nanoclaw.dev; Slack service is https://slack.nanoclaw.dev.',
+    );
+    expect(state.warns.at(-1)).not.toContain("Couldn't reach");
+  });
+
+  it('walks the manual path when the re-authentication is declined', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.brokerListWorkspaces.mockRejectedValueOnce(refusal());
+    state.runInheritScript.mockImplementationOnce(async () => 0).mockImplementationOnce(async () => 2);
+
+    await expect(maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core })).resolves.toBeUndefined();
+
+    expect(state.brokerListWorkspaces).toHaveBeenCalledOnce();
+    expect(state.warns.at(-1)).toContain('Walking through manual app creation instead.');
+  });
+
+  it('leaves a non-auth failure on the old path: one report, no second sign-in', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.brokerListWorkspaces.mockRejectedValue(new Error('socket hang up'));
+
+    await expect(maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core })).resolves.toBeUndefined();
+
+    expect(state.runInheritScript).toHaveBeenCalledOnce();
+    expect(state.warns.at(-1)).toBe('The service said: socket hang up. Walking through manual app creation instead.');
   });
 });
