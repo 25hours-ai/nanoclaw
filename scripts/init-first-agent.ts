@@ -32,6 +32,7 @@
  * For direct-addressable channels (telegram, whatsapp, etc.), --platform-id
  * is typically the same as the handle in --user-id, with the channel prefix.
  */
+import fs from 'fs';
 import net from 'net';
 import path from 'path';
 
@@ -77,6 +78,23 @@ interface Args {
 }
 
 const DEFAULT_WELCOME = 'System instruction: run /welcome to introduce yourself to the user on this new channel.';
+
+/**
+ * Channel-specific welcome addendum, matched HOST-SIDE: this composer knows
+ * the channel, so the welcome skill never scans for applicability — it just
+ * follows the pointer when one is present. Channel install skills drop
+ * `container/skills/welcome/addenda/<channel>.md`; with no file the default
+ * welcome is byte-identical to today's and the skill runs as written.
+ * An explicit --welcome override is always respected verbatim.
+ */
+function defaultWelcome(channel: string): string {
+  const hostPath = path.resolve(process.cwd(), 'container', 'skills', 'welcome', 'addenda', `${channel}.md`);
+  if (!fs.existsSync(hostPath)) return DEFAULT_WELCOME;
+  return (
+    `${DEFAULT_WELCOME} First read /app/skills/welcome/addenda/${channel}.md and follow it — ` +
+    'it adjusts the welcome for this channel.'
+  );
+}
 
 const DEFAULT_ROLE: Role = 'owner';
 
@@ -148,7 +166,7 @@ function parseArgs(argv: string[]): Args {
     displayName: out.displayName!,
     agentName: out.agentName?.trim() || out.displayName!,
     agentGroupId: out.agentGroupId?.trim() || undefined,
-    welcome: out.welcome?.trim() || DEFAULT_WELCOME,
+    welcome: out.welcome?.trim() || defaultWelcome(out.channel!),
     role: out.role ?? DEFAULT_ROLE,
     engagePattern: out.engagePattern?.trim() || undefined,
   };
