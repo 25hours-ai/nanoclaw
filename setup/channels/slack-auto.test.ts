@@ -10,6 +10,10 @@ const state = vi.hoisted(() => ({
   installToken: undefined as string | undefined,
   notes: [] as Array<{ message: string; title: string }>,
   warns: [] as string[],
+  decided: false,
+  imageSource: 'local' as 'local' | 'hardened',
+  writeImageSource: vi.fn(),
+  clearImageSource: vi.fn(),
   runInheritScript: vi.fn(async () => 0),
   brokerListWorkspaces: vi.fn(async () => [
     { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' },
@@ -34,11 +38,12 @@ vi.mock('../lib/browser.js', () => ({ confirmThenOpen: vi.fn() }));
 vi.mock('../lib/inherit-script.js', () => ({ runInheritScript: state.runInheritScript }));
 vi.mock('../lib/registry-state.js', () => ({
   REGISTRY_LOGIN_SCRIPT: 'setup/registry-login.sh',
-  imageSourceDecided: vi.fn(() => false),
+  clearImageSource: state.clearImageSource,
+  imageSourceDecided: vi.fn(() => state.decided),
   loginScriptAvailable: vi.fn(() => true),
-  readImageSource: vi.fn(() => 'local'),
+  readImageSource: vi.fn(() => state.imageSource),
   readRegistryAccount: vi.fn(() => state.account),
-  writeImageSource: vi.fn(),
+  writeImageSource: state.writeImageSource,
 }));
 vi.mock('../lib/runner.js', () => ({ ensureAnswer: <T>(answer: T): T => answer }));
 vi.mock('../lib/theme.js', () => ({ wrapForGutter: (message: string): string => message }));
@@ -215,6 +220,8 @@ describe('Slack managed-app sign-in', () => {
     resetBrokerMocks();
     state.notes.length = 0;
     state.warns.length = 0;
+    state.decided = false;
+    state.imageSource = 'local';
     state.installToken = 'nct-saved';
     state.account = {
       token: 'nct-saved',
@@ -255,6 +262,45 @@ describe('Slack managed-app sign-in', () => {
   });
 });
 
+describe('the image question the sign-in must not answer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBrokerMocks();
+    state.notes.length = 0;
+    state.warns.length = 0;
+    state.installToken = 'nct-saved';
+    state.account = { token: 'nct-saved', api: 'https://registry.nanoclaw.dev' };
+  });
+
+  it('leaves an unasked install unasked, rather than opted into the pull', async () => {
+    // The driver sets the key as a side effect of signing in. Writing `false`
+    // here would be an answer too — only removing it restores "not asked".
+    state.decided = false;
+    const root = track(rootWithModule());
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => fakeCore() });
+    expect(state.clearImageSource).toHaveBeenCalledOnce();
+    expect(state.writeImageSource).not.toHaveBeenCalled();
+  });
+
+  it('restores a deliberate local-build choice', async () => {
+    state.decided = true;
+    state.imageSource = 'local';
+    const root = track(rootWithModule());
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => fakeCore() });
+    expect(state.writeImageSource).toHaveBeenCalledWith('local');
+    expect(state.clearImageSource).not.toHaveBeenCalled();
+  });
+
+  it('leaves an install that already pulls alone', async () => {
+    state.decided = true;
+    state.imageSource = 'hardened';
+    const root = track(rootWithModule());
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => fakeCore() });
+    expect(state.writeImageSource).not.toHaveBeenCalled();
+    expect(state.clearImageSource).not.toHaveBeenCalled();
+  });
+});
+
 describe('a credential the Slack service refuses', () => {
   const refusal = (): FakeBrokerHttpError => new FakeBrokerHttpError(401, '/v1/workspaces');
 
@@ -263,6 +309,8 @@ describe('a credential the Slack service refuses', () => {
     resetBrokerMocks();
     state.notes.length = 0;
     state.warns.length = 0;
+    state.decided = true;
+    state.imageSource = 'hardened';
     state.installToken = 'nct-stale';
     state.account = { token: 'nct-stale', api: 'https://registry.sandbox.nanoclaw.dev' };
   });

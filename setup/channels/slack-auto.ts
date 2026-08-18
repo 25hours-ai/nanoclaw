@@ -42,6 +42,7 @@ import { confirmThenOpen } from '../lib/browser.js';
 import { runInheritScript } from '../lib/inherit-script.js';
 import {
   REGISTRY_LOGIN_SCRIPT,
+  clearImageSource,
   imageSourceDecided,
   loginScriptAvailable,
   readImageSource,
@@ -226,8 +227,10 @@ export async function maybeAutoProvisionSlack(
  * account, one sign-in, shared by the image pull and the Slack broker.
  *
  * The login driver flips the install's image source to 'hardened' as a side
- * effect (it exists to enable the pull). Signing in for Slack must not
- * override a deliberate local-build choice, so a decided source is restored.
+ * effect (it exists to enable the pull). Signing in for Slack must not answer
+ * the image question on the operator's behalf: a deliberate local-build choice
+ * is restored, and an install that has not been asked yet goes back to unasked
+ * rather than silently becoming a pulling one.
  *
  * `--require-verified` is what makes the return value mean something: without
  * it the driver exits 0 for a credential it merely kept, and this function
@@ -260,11 +263,13 @@ async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean }
     ),
     'NanoClaw sign-in',
   );
-  const priorSource = imageSourceDecided() ? readImageSource() : undefined;
+  const wasDecided = imageSourceDecided();
+  const priorSource = wasDecided ? readImageSource() : undefined;
   const start = Date.now();
   const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(opts.retry ? ['--force'] : [])];
   const code = await runInheritScript('bash', args);
   if (priorSource === 'local') writeImageSource('local');
+  else if (!wasDecided) clearImageSource();
   const token = code === 0 ? core.readInstallToken() : undefined;
   setupLog.step('slack-broker-login', token ? 'success' : code === 2 ? 'skipped' : 'failed', Date.now() - start, {
     EXIT_CODE: String(code),
