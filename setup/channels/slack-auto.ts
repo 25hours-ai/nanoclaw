@@ -42,6 +42,7 @@ import { confirmThenOpen } from '../lib/browser.js';
 import { runInheritScript } from '../lib/inherit-script.js';
 import {
   REGISTRY_LOGIN_SCRIPT,
+  clearImageSource,
   imageSourceDecided,
   loginScriptAvailable,
   readImageSource,
@@ -90,6 +91,8 @@ export interface ProvisioningCore {
   provisionManagedApp(managerToken: string, spec: { name: string }): Promise<ProvisionedApp>;
   readInstallToken(): string | undefined;
   readManagerToken(): string | undefined;
+  /** Where the broker calls go — named in the message when they are refused. */
+  readServiceBase(): string;
 }
 
 /** Injection seam for tests — the bootstrap never touches git or the loader in a unit test. */
@@ -207,7 +210,9 @@ export async function maybeAutoProvisionSlack(
   // The login driver is idempotent: it validates a matching saved credential
   // without opening a browser, and re-authenticates when its issuer or token
   // is stale. Always pass through it rather than treating "a token exists" as
-  // proof that the token belongs to this setup's registry environment.
+  // proof that the token belongs to this setup's registry environment — and
+  // ask it, via --require-verified, to answer "no" rather than "keep what you
+  // have" when it could not reach the service to check.
   const validatedToken = await signInForBroker(core);
   if (!validatedToken) {
     p.log.warn('Not signed in — walking through manual app creation instead.');
@@ -222,36 +227,53 @@ export async function maybeAutoProvisionSlack(
  * account, one sign-in, shared by the image pull and the Slack broker.
  *
  * The login driver flips the install's image source to 'hardened' as a side
- * effect (it exists to enable the pull). Signing in for Slack must not
- * override a deliberate local-build choice, so a decided source is restored.
+ * effect (it exists to enable the pull). Signing in for Slack must not answer
+ * the image question on the operator's behalf: a deliberate local-build choice
+ * is restored, and an install that has not been asked yet goes back to unasked
+ * rather than silently becoming a pulling one.
+ *
+ * `--require-verified` is what makes the return value mean something: without
+ * it the driver exits 0 for a credential it merely kept, and this function
+ * cannot tell that apart from one it checked. `retry` re-authenticates a
+ * credential the driver was happy with but the Slack service refused.
  */
-async function signInForBroker(core: ProvisioningCore): Promise<string | undefined> {
+async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean } = {}): Promise<string | undefined> {
   const savedAccount = readRegistryAccount();
   const savedService = displayServiceOrigin(savedAccount?.api);
   p.note(
     wrapForGutter(
-      savedAccount
+      opts.retry
         ? [
-            'Found saved NanoClaw credentials.',
-            `Service: ${savedService ?? 'unknown'}`,
-            'Checking whether they are valid for this setup…',
+            'The Slack service would not accept the saved credentials.',
+            'Signing in again — finish it in your browser, then come',
+            'back here.',
           ].join('\n')
-        : [
-            'Creating the app for you runs through your NanoClaw account.',
-            'A code appears below — finish the sign-in in your browser,',
-            'then come back here.',
-          ].join('\n'),
+        : savedAccount
+          ? [
+              'Found saved NanoClaw credentials.',
+              `Service: ${savedService ?? 'unknown'}`,
+              'Checking whether they are valid for this setup…',
+            ].join('\n')
+          : [
+              'Creating the app for you runs through your NanoClaw account.',
+              'A code appears below — finish the sign-in in your browser,',
+              'then come back here.',
+            ].join('\n'),
       6,
     ),
     'NanoClaw sign-in',
   );
-  const priorSource = imageSourceDecided() ? readImageSource() : undefined;
+  const wasDecided = imageSourceDecided();
+  const priorSource = wasDecided ? readImageSource() : undefined;
   const start = Date.now();
-  const code = await runInheritScript('bash', [REGISTRY_LOGIN_SCRIPT]);
+  const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(opts.retry ? ['--force'] : [])];
+  const code = await runInheritScript('bash', args);
   if (priorSource === 'local') writeImageSource('local');
+  else if (!wasDecided) clearImageSource();
   const token = code === 0 ? core.readInstallToken() : undefined;
   setupLog.step('slack-broker-login', token ? 'success' : code === 2 ? 'skipped' : 'failed', Date.now() - start, {
     EXIT_CODE: String(code),
+    ...(opts.retry ? { RETRY: 'true' } : {}),
   });
   return token;
 }
@@ -287,23 +309,71 @@ async function provisionDirect(
   }
 }
 
+/** An auth refusal, which no amount of retrying the same token can fix. */
+function isCredentialRefusal(core: ProvisioningCore, err: unknown): boolean {
+  return err instanceof core.BrokerHttpError && (err.status === 401 || err.status === 403);
+}
+
+/**
+ * Which two services are involved, for the message a refusal deserves. The
+ * credential comes from the account service; the call goes to the Slack
+ * service; naming only the second one describes a refusal the operator can do
+ * nothing about as an outage of a service that is in fact answering fine.
+ */
+function servicePairing(core: ProvisioningCore): string {
+  const credential = displayServiceOrigin(readRegistryAccount()?.api);
+  const service = displayServiceOrigin(core.readServiceBase()) ?? core.readServiceBase();
+  return `Credentials from ${credential ?? 'an unrecorded service'}; Slack service is ${service}.`;
+}
+
 async function provisionViaBroker(
   core: ProvisioningCore,
   installToken: string,
   name: string,
 ): Promise<Record<string, string> | undefined> {
+  let token = installToken;
   let workspaces: BrokerWorkspace[];
   const s = p.spinner();
   let start = Date.now();
   s.start('Checking your connected Slack workspaces…');
   try {
-    workspaces = (await core.brokerListWorkspaces(installToken)).filter((w) => w.status === 'active');
+    workspaces = (await core.brokerListWorkspaces(token)).filter((w) => w.status === 'active');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    s.stop("Couldn't reach the Slack service.", 1);
-    setupLog.step('slack-broker-workspaces', 'failed', Date.now() - start, { ERROR: message });
-    p.log.warn(`The service said: ${message}. Walking through manual app creation instead.`);
-    return undefined;
+    // A refusal means the token on disk is not one this service knows — the
+    // account service verifying it says nothing about that, since the two are
+    // separate deployments. One re-authentication is the only move that can
+    // change the answer; a second refusal is the operator's to resolve.
+    if (!isCredentialRefusal(core, err)) {
+      s.stop("Couldn't reach the Slack service.", 1);
+      setupLog.step('slack-broker-workspaces', 'failed', Date.now() - start, { ERROR: message });
+      p.log.warn(`The service said: ${message}. Walking through manual app creation instead.`);
+      return undefined;
+    }
+    s.stop("The Slack service didn't accept this install's credentials.", 1);
+    setupLog.step('slack-broker-workspaces', 'failed', Date.now() - start, { ERROR: message, REAUTH: 'offered' });
+    const refreshed = await signInForBroker(core, { retry: true });
+    if (!refreshed) {
+      p.log.warn(`${servicePairing(core)} Walking through manual app creation instead.`);
+      return undefined;
+    }
+    token = refreshed;
+    start = Date.now();
+    s.start('Checking your connected Slack workspaces…');
+    try {
+      workspaces = (await core.brokerListWorkspaces(token)).filter((w) => w.status === 'active');
+    } catch (retryErr) {
+      const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      s.stop("The Slack service didn't accept this install's credentials.", 1);
+      setupLog.step('slack-broker-workspaces', 'failed', Date.now() - start, {
+        ERROR: retryMessage,
+        REAUTH: 'exhausted',
+      });
+      p.log.warn(
+        `The service said: ${retryMessage}. ${servicePairing(core)} Walking through manual app creation instead.`,
+      );
+      return undefined;
+    }
   }
   if (workspaces.length > 0) {
     s.stop(
@@ -313,7 +383,7 @@ async function provisionViaBroker(
     );
   } else {
     s.stop('No Slack workspace is connected yet.');
-    workspaces = await connectWorkspace(core, installToken);
+    workspaces = await connectWorkspace(core, token);
     if (workspaces.length === 0) return undefined;
   }
 
@@ -322,7 +392,7 @@ async function provisionViaBroker(
   start = Date.now();
   s2.start(`Creating ${name} in ${workspace.team_name}… (~30s — generating its avatar first)`);
   try {
-    const app = await core.brokerProvision(installToken, { team_id: workspace.team_id, name });
+    const app = await core.brokerProvision(token, { team_id: workspace.team_id, name });
     const inputs = finishProvisioned(app, name, s2, start, 'slack-broker-provision');
     // The broker knows who connected the workspace — pre-fill the member-ID
     // prompt too (only when it matches the skill's validator; Enterprise Grid

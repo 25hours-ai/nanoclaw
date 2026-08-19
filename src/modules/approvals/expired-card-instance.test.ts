@@ -7,14 +7,14 @@
  * instance resolves no adapter at all — the card is never marked expired and
  * keeps showing live buttons after its row is deleted.
  *
- * `pending_approvals.instance` (migration 023) carries the identity the card
- * went out as; these cover the round trip and the NULL fallback.
+ * `pending_approvals.instance` (migration `approvals-instance`) carries the
+ * identity the card went out as; these cover the round trip and the NULL
+ * fallback.
  */
 import * as fs from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAgentGroup } from '../../db/agent-groups.js';
-import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
+import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/index.js';
 import { createPendingApproval, getPendingApproval } from '../../db/sessions.js';
 import type { ChannelDeliveryAdapter } from '../../delivery.js';
 import type { PendingApproval } from '../../types.js';
@@ -59,7 +59,7 @@ const captureAdapter: ChannelDeliveryAdapter = {
   },
 };
 
-function seedPending(overrides: Partial<PendingApproval> = {}): PendingApproval {
+async function seedPending(overrides: Partial<PendingApproval> = {}): Promise<PendingApproval> {
   const row: PendingApproval = {
     approval_id: 'oa-test0001',
     session_id: null,
@@ -80,32 +80,32 @@ function seedPending(overrides: Partial<PendingApproval> = {}): PendingApproval 
     approver_user_id: null,
     ...overrides,
   };
-  createPendingApproval(row);
+  await createPendingApproval(row);
   return row;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   delivered.length = 0;
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(db);
 
-  createAgentGroup({ id: 'ag-b', name: 'Agent B', folder: 'agent-b', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: 'ag-b', name: 'Agent B', folder: 'agent-b', agent_provider: null, created_at: now() });
 
   startOneCLIApprovalHandler(captureAdapter);
 });
 
-afterEach(() => {
+afterEach(async () => {
   stopOneCLIApprovalHandler();
-  closeDb();
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
 describe('expired OneCLI card edits carry the posting instance', () => {
   it('addresses the named instance the card went out as', async () => {
-    const row = seedPending();
+    const row = await seedPending();
 
     await editCardExpired(row, 'no response');
 
@@ -115,10 +115,10 @@ describe('expired OneCLI card edits carry the posting instance', () => {
   });
 
   it('round-trips the instance through the row — a swept card resolves the same identity', async () => {
-    seedPending({ instance: 'slack-mickey' });
+    await seedPending({ instance: 'slack-mickey' });
 
     // What sweepStaleApprovals does: re-read the persisted row, then edit.
-    const persisted = getPendingApproval('oa-test0001');
+    const persisted = await getPendingApproval('oa-test0001');
     expect(persisted?.instance).toBe('slack-mickey');
     await editCardExpired(persisted!, 'host restarted');
 
@@ -126,7 +126,7 @@ describe('expired OneCLI card edits carry the posting instance', () => {
   });
 
   it('a NULL instance falls back to the channel type', async () => {
-    const row = seedPending({ instance: null });
+    const row = await seedPending({ instance: null });
 
     await editCardExpired(row, 'no response');
 
@@ -134,7 +134,7 @@ describe('expired OneCLI card edits carry the posting instance', () => {
   });
 
   it('a default-instance install is unchanged — the edit still addresses the default key', async () => {
-    const row = seedPending({ instance: 'slack', platform_id: 'D-DEFAULT-admin-1' });
+    const row = await seedPending({ instance: 'slack', platform_id: 'D-DEFAULT-admin-1' });
 
     await editCardExpired(row, 'no response');
 

@@ -19,7 +19,7 @@ import type { Migration } from './index.js';
 export const migration023: Migration = {
   version: 23,
   name: 'approvals-instance',
-  up(db) {
-    db.exec(`ALTER TABLE pending_approvals ADD COLUMN instance TEXT;`);
+  async up(db) {
+    await db.exec(`ALTER TABLE pending_approvals ADD COLUMN instance TEXT;`);
   },
 };
