@@ -46,17 +46,26 @@ import { emitStatus } from './status.js';
 /** Provenance principal for the wizard's grant (user_roles.granted_by has an FK). */
 const WIZARD_PRINCIPAL = 'setup:pair-dial';
 
-export function grantOwnerFromPairing(
+export async function grantOwnerFromPairing(
   pairedNumber: string,
   at: string = new Date().toISOString(),
-): { granted: boolean; userId: string } {
+): Promise<{ granted: boolean; userId: string }> {
   const userId = `dial:${pairedNumber}`;
-  if (hasAnyOwner()) return { granted: false, userId };
+  // Must be awaited: the permissions store is async, and an unawaited call
+  // returns a Promise, which is always truthy — that read as "an owner already
+  // exists" on every install and silently skipped the grant.
+  if (await hasAnyOwner()) return { granted: false, userId };
   // granted_by carries a real principal (the wizard) so provenance is non-null,
   // which the user_roles FK requires — seed that principal before the grant.
-  upsertUser({ id: WIZARD_PRINCIPAL, kind: 'system', display_name: 'setup: pair-dial', created_at: at });
-  upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: at });
-  grantRole({ user_id: userId, role: 'owner', agent_group_id: null, granted_by: WIZARD_PRINCIPAL, granted_at: at });
+  await upsertUser({ id: WIZARD_PRINCIPAL, kind: 'system', display_name: 'setup: pair-dial', created_at: at });
+  await upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: at });
+  await grantRole({
+    user_id: userId,
+    role: 'owner',
+    agent_group_id: null,
+    granted_by: WIZARD_PRINCIPAL,
+    granted_at: at,
+  });
   return { granted: true, userId };
 }
 
@@ -188,7 +197,7 @@ export async function run(args: string[]): Promise<void> {
 
     // The wizard is the trusted authority for the owner grant — the adapter's
     // inbound handler only records the candidate. Grant here, at most one owner.
-    const grant = grantOwnerFromPairing(from);
+    const grant = await grantOwnerFromPairing(from);
     if (grant.granted) {
       p.log.success(`Granted owner to ${from}.`);
     } else {

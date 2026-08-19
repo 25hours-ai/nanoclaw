@@ -20,24 +20,24 @@ vi.mock('@clack/prompts', () => ({
   log: { message: vi.fn(), success: vi.fn(), warn, error: vi.fn() },
 }));
 
-beforeEach(() => {
-  const db = initTestDb();
-  runMigrations(db);
+beforeEach(async () => {
+  const db = await initTestDb();
+  await runMigrations(db);
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
 });
 
 describe('pair-dial wizard — grants owner from the consumed pairing', () => {
-  it('grants owner to the paired number with non-null provenance', () => {
-    expect(hasAnyOwner()).toBe(false);
+  it('grants owner to the paired number with non-null provenance', async () => {
+    expect(await hasAnyOwner()).toBe(false);
 
-    const res = grantOwnerFromPairing('+15551239999');
+    const res = await grantOwnerFromPairing('+15551239999');
     expect(res.granted).toBe(true);
     expect(res.userId).toBe('dial:+15551239999');
 
-    const owners = getOwners();
+    const owners = await getOwners();
     expect(owners).toHaveLength(1);
     expect(owners[0].user_id).toBe('dial:+15551239999');
     expect(owners[0].agent_group_id).toBeNull();
@@ -46,13 +46,13 @@ describe('pair-dial wizard — grants owner from the consumed pairing', () => {
     expect(owners[0].granted_by).not.toBeNull();
   });
 
-  it('does nothing when an owner already exists', () => {
-    grantOwnerFromPairing('+15551239999');
+  it('does nothing when an owner already exists', async () => {
+    await grantOwnerFromPairing('+15551239999');
 
-    const res = grantOwnerFromPairing('+15550000000');
+    const res = await grantOwnerFromPairing('+15550000000');
     expect(res.granted).toBe(false);
 
-    const owners = getOwners();
+    const owners = await getOwners();
     expect(owners).toHaveLength(1);
     expect(owners[0].user_id).toBe('dial:+15551239999'); // unchanged
   });
