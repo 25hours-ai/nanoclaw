@@ -116,9 +116,10 @@ For separate agents, also ask for a folder name and optionally a different assis
 
 ## Add Channel Group
 
-When adding another group/chat on an already-configured platform, read the
-channel's SKILL.md `## Channel Info`, follow its current discovery instructions,
-ask the isolation question, then register.
+When adding another group/chat on an already-configured platform, open
+`.claude/skills/add-<channel>/SKILL.md`, follow its current group-discovery
+instructions, ask the isolation question, then register. Channel-specific
+procedures belong in that channel's skill, not here.
 
 ## Change Wiring
 
