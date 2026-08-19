@@ -3,13 +3,14 @@
  * ncl — NanoClaw CLI client (container edition).
  *
  * Same interface as the host-side `bin/ncl`. Detects that it's inside a
- * container (the session DBs exist at /workspace/) and uses a DB transport
- * instead of the Unix socket transport.
+ * container and uses the registered session mailbox instead of the Unix socket
+ * transport.
  *
- * Writes a cli_request system message to outbound.db, polls inbound.db
- * for the response. Self-contained — no imports from agent-runner.
+ * Writes a cli_request system message and polls the same mailbox for the response.
  */
-import { Database } from 'bun:sqlite';
+import '../modules/index.js';
+import { getAgentMailbox, readMailboxContext } from '../mailbox/index.js';
+import type { AgentMailbox } from '../mailbox/types.js';
 
 // ---------------------------------------------------------------------------
 // Frame types (mirrors src/cli/frame.ts on the host)
@@ -28,14 +29,12 @@ type ResponseFrame =
   | { id: string; ok: false; error: { code: string; message: string } };
 
 // ---------------------------------------------------------------------------
-// Paths
+// Session identity
 // ---------------------------------------------------------------------------
 
-const INBOUND_DB = '/workspace/inbound.db';
-const OUTBOUND_DB = '/workspace/outbound.db';
 
 // ---------------------------------------------------------------------------
-// DB transport
+// Mailbox transport
 // ---------------------------------------------------------------------------
 
 function generateId(): string {
@@ -43,87 +42,41 @@ function generateId(): string {
 }
 
 /**
- * Write a cli_request to outbound.db.
- *
- * Uses BEGIN IMMEDIATE to acquire a write lock before reading max(seq),
- * preventing seq collisions with concurrent agent-runner writes.
+ * Write a cli_request through the registered mailbox.
  */
-function writeRequest(req: RequestFrame): void {
-  const db = new Database(OUTBOUND_DB);
-  db.exec('PRAGMA journal_mode = DELETE');
-  db.exec('PRAGMA busy_timeout = 5000');
-
-  const inDb = new Database(INBOUND_DB, { readonly: true });
-  inDb.exec('PRAGMA busy_timeout = 5000');
-
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    const maxOut = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
-    const maxIn = (inDb.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
-    const max = Math.max(maxOut, maxIn);
-    const nextSeq = max % 2 === 0 ? max + 1 : max + 2;
-
-    db.prepare(
-      `INSERT INTO messages_out (id, seq, timestamp, kind, content)
-       VALUES ($id, $seq, $timestamp, 'system', $content)`,
-    ).run({
-      $id: req.id,
-      $seq: nextSeq,
-      $timestamp: new Date().toISOString(),
-      $content: JSON.stringify({
+async function writeRequest(mailbox: AgentMailbox, req: RequestFrame): Promise<void> {
+  await mailbox.run(() =>
+    mailbox.operations.writeMessageOut({
+      id: req.id,
+      kind: 'system',
+      content: JSON.stringify({
         action: 'cli_request',
         requestId: req.id,
         command: req.command,
         args: req.args,
       }),
-    });
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  } finally {
-    inDb.close();
-    db.close();
-  }
+    }),
+  );
 }
 
 /**
- * Poll inbound.db for a cli_response matching our requestId.
- * Opens a fresh connection each poll (mmap_size=0) for cross-mount visibility.
+ * Poll the mailbox for a cli_response matching our requestId.
  */
-function pollResponse(requestId: string, timeoutMs: number): ResponseFrame | null {
+async function pollResponse(mailbox: AgentMailbox, requestId: string, timeoutMs: number): Promise<ResponseFrame | null> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const inDb = new Database(INBOUND_DB, { readonly: true });
-    inDb.exec('PRAGMA busy_timeout = 5000');
-    inDb.exec('PRAGMA mmap_size = 0');
-
-    try {
-      const row = inDb
-        .prepare("SELECT id, content FROM messages_in WHERE status = 'pending' AND content LIKE ?")
-        .get(`%"requestId":"${requestId}"%`) as { id: string; content: string } | null;
-
+    const response = await mailbox.run(() => {
+      const row = mailbox.operations.findCliResponse(requestId);
       if (row) {
-        // Mark as completed via processing_ack so agent-runner skips it
-        const outDb = new Database(OUTBOUND_DB);
-        outDb.exec('PRAGMA journal_mode = DELETE');
-        outDb.exec('PRAGMA busy_timeout = 5000');
-        outDb
-          .prepare(
-            "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'completed', ?)",
-          )
-          .run(row.id, new Date().toISOString());
-        outDb.close();
-
-        const parsed = JSON.parse(row.content);
-        return parsed.frame as ResponseFrame;
+        mailbox.operations.markMessages([row.id], 'completed');
+        return (JSON.parse(row.content) as { frame: ResponseFrame }).frame;
       }
-    } finally {
-      inDb.close();
-    }
+      return null;
+    });
+    if (response) return response;
 
-    Bun.sleepSync(500);
+    await Bun.sleep(500);
   }
 
   return null;
@@ -259,36 +212,47 @@ function formatHuman(resp: ResponseFrame): string {
 // Main
 // ---------------------------------------------------------------------------
 
-const argv = process.argv.slice(2);
-
-if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
-  printUsage();
-  process.exit(0);
-}
-
-const { command, args, json } = parseArgv(argv);
-const requestId = generateId();
-const req: RequestFrame = { id: requestId, command, args };
-
-writeRequest(req);
-
-const resp = pollResponse(requestId, 30_000);
-
-if (!resp) {
-  process.stderr.write('ncl: command timed out after 30s\n');
-  process.exit(2);
-}
-
-if (json) {
-  process.stdout.write(JSON.stringify(resp, null, 2) + '\n');
-} else if (resp.ok && resp.human !== undefined) {
-  // Server-rendered view — print verbatim.
-  process.stdout.write(resp.human + '\n');
-} else {
-  const output = formatHuman(resp);
-  if (!resp.ok) {
-    process.stderr.write(output);
-    process.exit(1);
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+    printUsage();
+    return;
   }
-  process.stdout.write(output);
+
+  const context = await readMailboxContext();
+  const mailbox = getAgentMailbox();
+  await mailbox.start(context);
+  try {
+    const { command, args, json } = parseArgv(argv);
+    const requestId = generateId();
+    await writeRequest(mailbox, { id: requestId, command, args });
+    const resp = await pollResponse(mailbox, requestId, 30_000);
+
+    if (!resp) {
+      process.stderr.write('ncl: command timed out after 30s\n');
+      process.exitCode = 2;
+      return;
+    }
+
+    if (json) {
+      process.stdout.write(JSON.stringify(resp, null, 2) + '\n');
+    } else if (resp.ok && resp.human !== undefined) {
+      process.stdout.write(resp.human + '\n');
+    } else {
+      const output = formatHuman(resp);
+      if (!resp.ok) {
+        process.stderr.write(output);
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(output);
+    }
+  } finally {
+    await mailbox.stop();
+  }
 }
+
+main().catch((err) => {
+  process.stderr.write(`ncl: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(2);
+});

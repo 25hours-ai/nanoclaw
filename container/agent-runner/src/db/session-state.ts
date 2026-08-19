@@ -9,7 +9,7 @@
  * providers is therefore lossless: each provider's last thread stays
  * on file and resumes cleanly if the user flips back.
  */
-import { getOutboundDb } from './connection.js';
+import { getAgentMailbox } from '../mailbox/index.js';
 
 const LEGACY_KEY = 'sdk_session_id';
 
@@ -18,20 +18,15 @@ function continuationKey(providerName: string): string {
 }
 
 function getValue(key: string): string | undefined {
-  const row = getOutboundDb()
-    .prepare('SELECT value FROM session_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
-  return row?.value;
+  return getAgentMailbox().operations.getState(key)?.value;
 }
 
 function setValue(key: string, value: string): void {
-  getOutboundDb()
-    .prepare('INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES (?, ?, ?)')
-    .run(key, value, new Date().toISOString());
+  getAgentMailbox().operations.setState(key, value);
 }
 
 function deleteValue(key: string): void {
-  getOutboundDb().prepare('DELETE FROM session_state WHERE key = ?').run(key);
+  getAgentMailbox().operations.deleteState(key);
 }
 
 /**
@@ -113,11 +108,9 @@ export function clearCurrentInReplyTo(): void {
 }
 
 export function getCurrentInReplyTo(): string | null {
-  const row = getOutboundDb()
-    .prepare('SELECT value, updated_at FROM session_state WHERE key = ?')
-    .get(IN_REPLY_TO_KEY) as { value: string; updated_at: string } | undefined;
+  const row = getAgentMailbox().operations.getState(IN_REPLY_TO_KEY);
   if (!row) return null;
-  const age = Date.now() - new Date(row.updated_at).getTime();
+  const age = Date.now() - new Date(row.updatedAt).getTime();
   if (!Number.isFinite(age) || age > IN_REPLY_TO_MAX_AGE_MS) return null;
   return row.value;
 }

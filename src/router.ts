@@ -348,7 +348,7 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   //    sender_scope, and access gate. An agent that engages gets its own
   //    session and container wake. An agent that declines but has
   //    ignored_message_policy='accumulate' still gets the message stored in
-  //    its session (trigger=0) so the context is available when it does
+  //    its session without triggering a wake so the context is available when it does
   //    engage later. Drop policy = skip silently.
   //
   //    Subscribe (for mention-sticky wirings on threaded platforms) fires
@@ -557,7 +557,7 @@ async function deliverToAgent(
       return;
     }
     if (gate.action === 'deny') {
-      writeOutboundDirect(session.agent_group_id, session.id, {
+      await writeOutboundDirect(session.agent_group_id, session.id, {
         id: `deny-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         kind: 'chat',
         platformId: deliveryAddr.platformId,
@@ -587,7 +587,7 @@ async function deliverToAgent(
     channelType: deliveryAddr.channelType,
     threadId: deliveryAddr.threadId,
     content: event.message.content,
-    trigger: wake ? 1 : 0,
+    trigger: wake,
   });
 
   if (wake) {

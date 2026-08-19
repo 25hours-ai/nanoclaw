@@ -357,7 +357,7 @@ describe('end-to-end with mock provider', () => {
 
     for await (const event of query.events) {
       if (event.type === 'result' && event.text) {
-        writeMessageOut({
+        await writeMessageOut({
           id: `out-${Date.now()}`,
           in_reply_to: routing.inReplyTo,
           kind: 'chat',

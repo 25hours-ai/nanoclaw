@@ -13,6 +13,8 @@
 import type Database from 'better-sqlite3';
 
 import { nextEvenSeq } from '../../db/session-db.js';
+import { createTaskInboundRecord } from '../../mailbox/model.js';
+import type { TaskWrite } from '../../mailbox/model.js';
 
 export interface TaskContent {
   prompt: string;
@@ -43,25 +45,19 @@ export function parseTaskContent(raw: string): TaskContent {
  * or an on-demand run. Tasks never set platform/channel/thread (they fire into
  * an isolated system session), so those columns are always NULL.
  */
-export function insertTaskRow(
-  db: Database.Database,
-  row: {
-    id: string;
-    seriesId: string;
-    processAfter: string | null;
-    recurrence: string | null;
-    content: string;
-    status?: 'pending' | 'paused';
-  },
-): void {
+export function insertTaskRow(db: Database.Database, row: TaskWrite, sequence = nextEvenSeq(db)): void {
+  const record = createTaskInboundRecord(row, sequence, new Date().toISOString());
   db.prepare(
-    `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, platform_id, channel_type, thread_id, content, series_id)
-     VALUES (@id, @seq, @timestamp, @status, 0, @processAfter, @recurrence, 'task', NULL, NULL, NULL, @content, @seriesId)`,
+    `INSERT INTO messages_in
+       (id, seq, kind, timestamp, status, process_after, recurrence, series_id, tries, trigger,
+        platform_id, channel_type, thread_id, content, source_session_id, on_wake)
+     VALUES
+       (@id, @sequence, @kind, @timestamp, @status, @processAfter, @recurrence, @seriesId, @tries, @trigger,
+        @platformId, @channelType, @threadId, @content, @sourceSessionId, @onWake)`,
   ).run({
-    status: 'pending',
-    ...row,
-    timestamp: new Date().toISOString(),
-    seq: nextEvenSeq(db),
+    ...record,
+    trigger: record.trigger ? 1 : 0,
+    onWake: record.onWake ? 1 : 0,
   });
 }
 
@@ -115,11 +111,16 @@ export interface TaskUpdate {
 // Merges content JSON in-place so callers can update prompt/script without
 // clobbering other fields. Matches by id OR series_id so the live next
 // occurrence of a recurring task is updated, not just the completed row the
-// agent last saw. Returns the number of rows touched.
+// agent last saw. Due occurrences are already execution candidates and remain
+// immutable; only future pending or paused occurrences are updated. Returns
+// the number of rows touched.
 export function updateTask(db: Database.Database, taskId: string, update: TaskUpdate): number {
   const rows = db
     .prepare(
-      "SELECT id, content FROM messages_in WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",
+      `SELECT id, content FROM messages_in
+       WHERE (id = ? OR series_id = ?)
+         AND kind = 'task'
+         AND (status = 'paused' OR (status = 'pending' AND datetime(process_after) > datetime('now')))`,
     )
     .all(taskId, taskId) as Array<{ id: string; content: string }>;
 

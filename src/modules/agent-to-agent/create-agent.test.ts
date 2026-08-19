@@ -108,7 +108,7 @@ const SESSION = { id: 'sess-1', agent_group_id: 'ag-1' } as Session;
 async function runCreateAgent(content: Record<string, unknown>): Promise<void> {
   const wrapped = getDeliveryAction('create_agent');
   expect(wrapped).toBeDefined();
-  await wrapped!(content, SESSION, undefined as never);
+  await wrapped!(content, SESSION);
 }
 
 function liveGrant(approvalId: string, payload: Record<string, unknown>): PendingApproval {
