@@ -204,11 +204,11 @@ export async function createPendingApproval(
   const result = await getDb().run(
     `INSERT INTO pending_approvals
          (approval_id, session_id, request_id, action, payload, created_at,
-          agent_group_id, channel_type, platform_id, platform_message_id, expires_at, status,
+          agent_group_id, channel_type, platform_id, instance, platform_message_id, expires_at, status,
           title, question, options_json, approver_user_id)
        VALUES
          (@approval_id, @session_id, @request_id, @action, @payload, @created_at,
-          @agent_group_id, @channel_type, @platform_id, @platform_message_id, @expires_at, @status,
+          @agent_group_id, @channel_type, @platform_id, @instance, @platform_message_id, @expires_at, @status,
           @title, @question, @options_json, @approver_user_id)
        ON CONFLICT (approval_id) DO NOTHING`,
     {
@@ -216,6 +216,7 @@ export async function createPendingApproval(
       agent_group_id: null,
       channel_type: null,
       platform_id: null,
+      instance: null,
       platform_message_id: null,
       expires_at: null,
       status: 'pending',
