@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import { closeSessionDb, getInboundDb, getOutboundDb, initTestSessionDb } from './db/connection.js';
+import { closeSessionDb, getInboundDb, getOutboundDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
 import { getUndeliveredMessages, writeMessageOut } from './db/messages-out.js';
 import { getTaskSeriesId } from './db/session-routing.js';
 import { sendFile, sendMessage } from './mcp-tools/core.js';

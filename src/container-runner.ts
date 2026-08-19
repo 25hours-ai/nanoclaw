@@ -481,7 +481,7 @@ export async function buildMounts(
   const groupDir = path.resolve(GROUPS_DIR, agentGroup.folder);
   const scope = agentGroup.id;
 
-  // Session folder at /workspace (contains inbound.db, outbound.db, outbox/, .heartbeat)
+  // Session workspace: mailbox-selected state plus outbox and heartbeat files.
   mounts.push({ hostPath: sessDir, containerPath: '/workspace', readonly: false, mountClass: 'group-state', scope });
   mounts.push({
     hostPath: sessionContextPath(agentGroup.id, session.id),

@@ -68,6 +68,8 @@ export interface MailboxOperations {
 
 export interface AgentMailbox {
   readonly operations: MailboxOperations;
+  /** True when repeated read failures require a fresh runner process. */
+  shouldRestartAfter?(error: unknown): boolean;
   /** Null only during runner-before-host upgrades; implementations that need context must reject it explicitly. */
   start(key: MailboxSessionKey | null): Promise<void>;
   run<T>(action: () => T | Promise<T>): Promise<T>;

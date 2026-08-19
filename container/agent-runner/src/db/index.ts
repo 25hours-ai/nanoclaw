@@ -1,4 +1,3 @@
-export { getInboundDb, getOutboundDb, initTestSessionDb, closeSessionDb } from './connection.js';
 export { touchHeartbeat } from '../heartbeat.js';
 export { setContainerToolInFlight, clearContainerToolInFlight, clearStaleProcessingAcks } from './container-state.js';
 export {

@@ -1,13 +1,6 @@
 /**
  * Session lifecycle: folders, mailboxes, messages, and container status.
- *
- * The SQLite fallback keeps three cross-mount invariants load-bearing:
- *   1. journal_mode=DELETE — WAL's mmapped -shm doesn't refresh host→guest.
- *   2. Host opens-writes-closes per operation so the guest sees new pages.
- *   3. One writer per file; concurrent DELETE-mode writers can corrupt it.
- *
- * Other mailbox implementations own their equivalent visibility and
- * single-writer guarantees behind the registered capability.
+ * Storage layout and consistency belong to the registered mailbox.
  */
 import { AsyncLocalStorage } from 'async_hooks';
 import fs from 'fs';
@@ -54,16 +47,6 @@ export function writeSessionContext(agentGroupId: string, sessionId: string, mai
   fs.mkdirSync(path.dirname(contextPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(contextPath, JSON.stringify({ agentGroupId, sessionId, mailbox }), { mode: 0o600 });
   fs.chmodSync(contextPath, 0o600);
-}
-
-/** Path to the built-in SQLite fallback's inbound file. */
-export function inboundDbPath(agentGroupId: string, sessionId: string): string {
-  return path.join(sessionDir(agentGroupId, sessionId), 'inbound.db');
-}
-
-/** Path to the built-in SQLite fallback's outbound file. */
-export function outboundDbPath(agentGroupId: string, sessionId: string): string {
-  return path.join(sessionDir(agentGroupId, sessionId), 'outbound.db');
 }
 
 /** Path to the container heartbeat file (touched instead of DB writes). */
@@ -427,8 +410,7 @@ function extractAttachmentFiles(
 
 /**
  * Detects same-key session() nesting, which is forbidden: implementations may
- * serialize session() per key, so a nested call deadlocks them even though
- * the SQLite fallback happens to tolerate it. Tracked per async context so
+ * serialize session() per key, so a nested call may deadlock. Tracked per async context so
  * legitimately concurrent top-level sessions on the same key don't trip it.
  */
 const activeMailboxKeys = new AsyncLocalStorage<ReadonlySet<string>>();
@@ -479,8 +461,7 @@ async function runMailboxSession<T>(
  * loop picks it up. Used by the command gate to send denial responses
  * without waking a container.
  *
- * Needs the read-write open because the delivery poll uses a read-only handle.
- * Host sequence numbers remain even, outside the runner's odd sequence space.
+ * The selected mailbox owns persistence and sequencing.
  */
 export function writeOutboundDirect(
   agentGroupId: string,
@@ -502,7 +483,7 @@ export function writeOutboundDirect(
  *
  * Symmetric with `extractAttachmentFiles` on the inbound side: the container
  * writes files into the session's `outbox/<messageId>/` directory alongside
- * its `messages_out` row, and the host reads them back at delivery time.
+ * its outbound message, and the host reads them back at delivery time.
  *
  * Returns undefined when the outbox dir is missing or no declared file was
  * actually on disk — delivery continues without attachments rather than

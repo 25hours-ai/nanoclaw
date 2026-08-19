@@ -85,7 +85,6 @@ vi.mock('../../session-manager.js', () => ({
   readOutboxFiles: vi.fn().mockReturnValue([]),
   resolveSession: vi.fn(),
   sessionDir: vi.fn().mockReturnValue('/tmp/nowhere'),
-  inboundDbPath: vi.fn().mockReturnValue('/tmp/nowhere/inbound.db'),
 }));
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),

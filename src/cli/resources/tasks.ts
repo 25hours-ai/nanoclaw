@@ -13,7 +13,7 @@ import {
   TASKS_SYSTEM_THREAD_ID,
 } from '../../db/sessions.js';
 import type { TaskUpdate } from '../../mailbox/index.js';
-import { parseTaskContent } from '../../modules/scheduling/db.js';
+import { parseTaskContent } from '../../modules/scheduling/task-content.js';
 import {
   createScheduledTask,
   enforceRecurrenceLimit,

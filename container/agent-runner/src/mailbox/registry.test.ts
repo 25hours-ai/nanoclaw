@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { getAgentMailbox, readMailboxContext, registerAgentMailbox, resetAgentMailboxForTesting } from './index.js';
-import { SqliteAgentMailbox } from './sqlite.js';
+import { SqliteAgentMailbox } from './sqlite/index.js';
 import type { AgentMailbox } from './types.js';
 
 const composedFactory = resetAgentMailboxForTesting();
@@ -54,6 +54,17 @@ describe('agent mailbox registry', () => {
     expect(await read('../mcp-tools/index.ts')).toContain("import '../modules/index.js';");
     expect(await read('../cli/ncl.ts')).toContain("import '../modules/index.js';");
     expect(await read('../../bunfig.toml')).toContain('preload = ["./src/modules/index.ts"]');
+  });
+
+  test('keeps SQLite connections and SQL inside the SQLite driver', async () => {
+    expect(await Bun.file(new URL('../db/connection.ts', import.meta.url)).exists()).toBe(false);
+    expect(await Bun.file(new URL('./sqlite/connection.ts', import.meta.url)).exists()).toBe(true);
+
+    for (const name of fs.readdirSync(new URL('../db/', import.meta.url))) {
+      if (!name.endsWith('.ts') || name.endsWith('.test.ts')) continue;
+      const source = await Bun.file(new URL(`../db/${name}`, import.meta.url)).text();
+      expect(source).not.toMatch(/bun:sqlite|\.prepare\s*\(\s*['"`]/);
+    }
   });
 });
 

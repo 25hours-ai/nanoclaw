@@ -26,7 +26,7 @@ import { resolveGroupFolderPath } from '../group-folder.js';
 import { PERSONA_PREPEND_FILE, readGroupPersona } from '../group-persona.js';
 import { log } from '../log.js';
 import { createScheduledTask, taskNameSlug } from '../modules/scheduling/create.js';
-import { parseTaskContent } from '../modules/scheduling/db.js';
+import { parseTaskContent } from '../modules/scheduling/task-content.js';
 import { withExistingMailboxSession } from '../session-manager.js';
 import type { AgentGroup } from '../types.js';
 import { groupSkillsOverlayDir, markPluginServers } from './create-agent.js';

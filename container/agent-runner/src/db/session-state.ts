@@ -1,6 +1,5 @@
 /**
- * Persistent key/value state for the container. Lives in outbound.db
- * (container-owned, already scoped per channel/thread).
+ * Persistent key/value state owned by the registered mailbox.
  *
  * Primary use: remember each provider's opaque continuation id so the
  * agent's conversation resumes across container restarts. Keyed per
@@ -80,10 +79,8 @@ export function clearContinuation(providerName: string): void {
  * rows so the host's a2a return-path routing can correlate replies back to
  * the originating session.
  *
- * This lives in outbound.db rather than module state because the MCP server
- * runs as a separate stdio subprocess from the poll loop — module state set
- * by the poll loop is invisible to it. Both processes open outbound.db
- * (journal_mode=DELETE + busy_timeout make intra-container access safe).
+ * This lives in mailbox state because the MCP server runs as a separate stdio
+ * subprocess; module state set by the poll loop is invisible to it.
  */
 const IN_REPLY_TO_KEY = 'current_in_reply_to';
 

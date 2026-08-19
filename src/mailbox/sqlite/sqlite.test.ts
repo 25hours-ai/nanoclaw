@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from '../db/schema.js';
-import { wrapSqliteInbound, wrapSqliteOutbound } from './sqlite.js';
+import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from './schema.js';
+import { wrapSqliteInbound, wrapSqliteOutbound } from './index.js';
 
 describe('SQLite mailbox canonical serialization', () => {
   const databases: Database.Database[] = [];

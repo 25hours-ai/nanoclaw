@@ -1,5 +1,5 @@
 /**
- * Task DB helpers used by the scheduling module.
+ * SQLite task helpers used by the SQLite mailbox driver.
  *
  * Tasks are `messages_in` rows with `kind='task'`. This module doesn't own
  * its own table — it piggybacks on the core schema. That's why there's no
@@ -12,32 +12,9 @@
  */
 import type Database from 'better-sqlite3';
 
-import { nextEvenSeq } from '../../db/session-db.js';
-import { createTaskInboundRecord } from '../../mailbox/model.js';
-import type { TaskWrite } from '../../mailbox/model.js';
-
-export interface TaskContent {
-  prompt: string;
-  script: string | null;
-  originSessionId: string | null;
-}
-
-/** Decode a task row's content envelope — the read half of insertTaskRow's encode. */
-export function parseTaskContent(raw: string): TaskContent {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
-      script: typeof parsed.script === 'string' ? parsed.script : null,
-      originSessionId: typeof parsed.originSessionId === 'string' ? parsed.originSessionId : null,
-    };
-    // eslint-disable-next-line no-catch-all/no-catch-all -- LEGACY-COMPAT(v1-tasks): plain-string content predating the JSON envelope
-  } catch {
-    // LEGACY-COMPAT(v1-tasks): plain-string content from rows that predate the
-    // JSON envelope. Removable once no pre-v2 session DBs remain in the wild.
-    return { prompt: raw, script: null, originSessionId: null };
-  }
-}
+import { nextEvenSeq } from './session-db.js';
+import { createTaskInboundRecord } from '../model.js';
+import type { TaskWrite } from '../model.js';
 
 /**
  * Insert one pending task occurrence. `seriesId` is the series join key — equal

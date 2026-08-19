@@ -4,7 +4,7 @@ import {
   sqliteClearContainerToolInFlight,
   sqliteClearStaleProcessingAcks,
   sqliteSetContainerToolInFlight,
-} from '../db/connection.js';
+} from './connection.js';
 import {
   sqliteDeleteState,
   sqliteFindByName,
@@ -26,15 +26,15 @@ import {
   sqliteSetState,
   sqliteTimestamp,
   sqliteWriteMessageOut,
-} from './sqlite-operations.js';
-import type { MessageInRow } from '../db/messages-in.js';
-import type { MessageOutRow } from '../db/messages-out.js';
+} from './operations.js';
+import type { MessageInRow } from '../../db/messages-in.js';
+import type { MessageOutRow } from '../../db/messages-out.js';
 import {
   parseContainerRecord,
   parseInboundRecord,
   parseOutboundRecord,
   parseSessionRoutingRecord,
-} from './model.generated.js';
+} from '../model.generated.js';
 import type {
   AgentMailbox,
   InboundMessage,
@@ -42,7 +42,7 @@ import type {
   MailboxSessionKey,
   OutboundMessage,
   ProcessingStatus,
-} from './types.js';
+} from '../types.js';
 
 function inboundMessage(row: MessageInRow): InboundMessage {
   return parseInboundRecord({
@@ -83,6 +83,15 @@ function outboundMessage(row: MessageOutRow): OutboundMessage {
 
 export class SqliteAgentMailbox implements AgentMailbox {
   readonly operations: MailboxOperations = this;
+
+  shouldRestartAfter(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+      message.includes('database disk image is malformed') ||
+      message.includes('SQLITE_CORRUPT') ||
+      message.includes('file is not a database')
+    );
+  }
 
   async start(_key: MailboxSessionKey | null): Promise<void> {}
 

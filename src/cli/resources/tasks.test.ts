@@ -30,13 +30,8 @@ import {
   taskThreadId,
   updateSession,
 } from '../../db/sessions.js';
-import {
-  inboundDbPath,
-  initSessionFolder,
-  outboundDbPath,
-  sessionDir,
-  withMailboxSession,
-} from '../../session-manager.js';
+import { initSessionFolder, sessionDir, withMailboxSession } from '../../session-manager.js';
+import { inboundDbPath, outboundDbPath } from '../../mailbox/sqlite/paths.js';
 import { dispatch } from '../dispatch.js';
 import { formatTasksTable } from '../format-tasks.js';
 import type { CallerContext } from '../frame.js';

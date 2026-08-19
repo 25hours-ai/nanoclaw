@@ -1,13 +1,13 @@
-import { getInboundDb, getOutboundDb, openInboundDb } from '../db/connection.js';
-import type { MessageInRow } from '../db/messages-in.js';
-import type { MessageOutRow } from '../db/messages-out.js';
+import { getInboundDb, getOutboundDb, openInboundDb } from './connection.js';
+import type { MessageInRow } from '../../db/messages-in.js';
+import type { MessageOutRow } from '../../db/messages-out.js';
 import {
   createOutboundRecord,
   parseDestinationRecord,
   parseSessionRoutingRecord,
   parseStateRecord,
-} from './model.generated.js';
-import type { Destination, OutboundWrite, SessionRouting, StateValue } from './types.js';
+} from '../model.generated.js';
+import type { Destination, OutboundWrite, SessionRouting, StateValue } from '../types.js';
 
 let hasOnWake: boolean | null = null;
 

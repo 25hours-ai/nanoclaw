@@ -7,8 +7,8 @@
  */
 import Database from 'better-sqlite3';
 
-import { createInboundRecord } from '../mailbox/model.js';
-import type { InboundWrite } from '../mailbox/model.js';
+import { createInboundRecord } from '../model.js';
+import type { InboundWrite } from '../model.js';
 import { INBOUND_SCHEMA, OUTBOUND_SCHEMA } from './schema.js';
 
 /** Apply the inbound or outbound schema to a DB file. Idempotent. */
@@ -86,7 +86,7 @@ export function replaceDestinations(db: Database.Database, entries: DestinationR
  *
  * Exported so the scheduling module's task helpers can maintain the
  * host-writes-even-seq invariant without duplicating the logic. Not part of
- * the general public API — imported by `src/modules/scheduling/db.ts` only.
+ * the general public API — used only by this SQLite driver.
  */
 export function nextEvenSeq(db: Database.Database): number {
   const maxSeq = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;

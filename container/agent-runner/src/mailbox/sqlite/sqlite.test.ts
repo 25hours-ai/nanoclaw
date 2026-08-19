@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { closeSessionDb, initTestSessionDb } from '../db/connection.js';
-import { SqliteAgentMailbox } from './sqlite.js';
+import { closeSessionDb, initTestSessionDb } from './connection.js';
+import { SqliteAgentMailbox } from './index.js';
 
 afterEach(() => closeSessionDb());
 
 describe('SQLite runner mailbox canonical serialization', () => {
+  test('classifies only corruption errors as requiring a fresh runner', () => {
+    const mailbox = new SqliteAgentMailbox();
+    expect(mailbox.shouldRestartAfter(new Error('database disk image is malformed'))).toBe(true);
+    expect(mailbox.shouldRestartAfter('SqliteError: SQLITE_CORRUPT_VTAB: ...')).toBe(true);
+    expect(mailbox.shouldRestartAfter('file is not a database')).toBe(true);
+    expect(mailbox.shouldRestartAfter('database is locked')).toBe(false);
+    expect(mailbox.shouldRestartAfter('no such table: messages_in')).toBe(false);
+  });
+
   test('round-trips full inbound and outbound lifecycle records', async () => {
     const { inbound, outbound } = initTestSessionDb();
     inbound

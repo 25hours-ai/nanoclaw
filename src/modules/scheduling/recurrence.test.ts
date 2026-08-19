@@ -10,9 +10,9 @@ import fs from 'fs';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ensureSchema, openInboundDb } from '../../db/session-db.js';
-import { insertTaskRow } from './db.js';
-import { wrapSqliteInbound } from '../../mailbox/sqlite.js';
+import { ensureSchema, openInboundDb } from '../../mailbox/sqlite/session-db.js';
+import { insertTaskRow } from '../../mailbox/sqlite/tasks.js';
+import { wrapSqliteInbound } from '../../mailbox/sqlite/index.js';
 import { handleRecurrence, scriptBackoffMinutes } from './recurrence.js';
 import type { Session } from '../../types.js';
 

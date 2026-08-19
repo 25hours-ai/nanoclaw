@@ -20,8 +20,6 @@ vi.mock('./config.js', async () => {
 import {
   destroySessionMailbox,
   initSessionFolder,
-  inboundDbPath,
-  outboundDbPath,
   sessionContextPath,
   sessionDir,
   withMailboxSession,
@@ -29,6 +27,7 @@ import {
   writeSessionContext,
   writeSessionMessage,
 } from './session-manager.js';
+import { inboundDbPath, outboundDbPath } from './mailbox/sqlite/paths.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from './db/index.js';
 import { createSession } from './db/sessions.js';
 import type { Session } from './types.js';

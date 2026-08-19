@@ -27,14 +27,9 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
-import { getDeliveredIds } from './db/session-db.js';
-import {
-  inboundDbPath,
-  outboundDbPath,
-  resolveSession,
-  resolveTaskSession,
-  withMailboxSession,
-} from './session-manager.js';
+import { getDeliveredIds } from './mailbox/sqlite/session-db.js';
+import { inboundDbPath, outboundDbPath } from './mailbox/sqlite/paths.js';
+import { resolveSession, resolveTaskSession, withMailboxSession } from './session-manager.js';
 import {
   deliverSessionMessages,
   registerDeliveryBatchPreview,

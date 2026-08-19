@@ -1,9 +1,9 @@
 import fs from 'fs';
-import path from 'path';
 import type Database from 'better-sqlite3';
 
-import { DATA_DIR } from '../config.js';
-import { log } from '../log.js';
+import { log } from '../../log.js';
+import { sessionMailboxDir, sessionMailboxPath } from './paths.js';
+export { inboundDbPath, outboundDbPath, sessionMailboxDir, sessionMailboxPath } from './paths.js';
 import {
   countDueMessages,
   deleteOrphanProcessingClaims,
@@ -27,7 +27,7 @@ import {
   replaceDestinations,
   retryWithBackoff,
   upsertSessionRouting,
-} from '../db/session-db.js';
+} from './session-db.js';
 import {
   createDirectOutboundRecord,
   outboundDelivery,
@@ -37,7 +37,7 @@ import {
   parseProcessingAckRecord,
   parseSessionRoutingRecord,
   parseTaskRecord,
-} from './model.js';
+} from '../model.js';
 import {
   cancelAllTasks,
   cancelTask,
@@ -49,7 +49,7 @@ import {
   resumeTask,
   trailingFailedRuns,
   updateTask,
-} from '../modules/scheduling/db.js';
+} from './tasks.js';
 import type {
   AgentMailbox,
   InboundMailbox,
@@ -61,15 +61,7 @@ import type {
   ProcessingAck,
   TaskRecord,
   TaskStats,
-} from './types.js';
-
-export function sessionMailboxDir(key: MailboxSessionKey): string {
-  return path.join(DATA_DIR, 'v2-sessions', key.agentGroupId, key.sessionId);
-}
-
-export function sessionMailboxPath(key: MailboxSessionKey, side: 'inbound' | 'outbound'): string {
-  return path.join(sessionMailboxDir(key), `${side}.db`);
-}
+} from '../types.js';
 
 const SQLITE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
 

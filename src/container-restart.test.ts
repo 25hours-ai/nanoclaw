@@ -34,9 +34,6 @@ vi.mock('./session-manager.js', () => ({
 }));
 
 const mockCountDueMessages = vi.fn((..._args: unknown[]) => 0);
-vi.mock('./db/session-db.js', () => ({
-  countDueMessages: (...args: unknown[]) => mockCountDueMessages(...args),
-}));
 
 import { restartAgentGroupContainers } from './container-restart.js';
 

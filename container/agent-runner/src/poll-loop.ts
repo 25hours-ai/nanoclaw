@@ -34,29 +34,8 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from 
 const POLL_INTERVAL_MS = 1000;
 const ACTIVE_POLL_INTERVAL_MS = 500;
 
-/**
- * Number of consecutive `database disk image is malformed` errors after which
- * the follow-up poll gives up and exits the process. At ACTIVE_POLL_INTERVAL_MS
- * = 500ms this is roughly 5 seconds — long enough to dodge a transient torn
- * read during a host write, short enough to recover quickly from a poisoned
- * page cache (host-sweep then respawns with a fresh mount).
- */
-const CORRUPTION_STREAK_EXIT = 10;
-
-/**
- * True for SQLite errors that indicate a corrupt READ view — almost always a
- * cross-mount page-cache coherency issue on Docker Desktop macOS rather than
- * actual file damage (host-side integrity_check passes). Reopening the DB
- * handle inside this process does NOT recover; only a fresh container mount
- * does. Caller's job is to exit so host-sweep respawns the container.
- */
-export function isCorruptionError(msg: string): boolean {
-  return (
-    msg.includes('database disk image is malformed') ||
-    msg.includes('SQLITE_CORRUPT') ||
-    msg.includes('file is not a database')
-  );
-}
+/** Consecutive driver-classified failures before a fresh runner is required. */
+const MAILBOX_FAILURE_STREAK_EXIT = 10;
 
 function log(msg: string): void {
   console.error(`[poll-loop] ${msg}`);
@@ -89,10 +68,10 @@ export interface PollLoopConfig {
 /**
  * Main poll loop. Runs indefinitely until the process is killed.
  *
- * 1. Poll messages_in for pending rows
+ * 1. Poll the mailbox for pending messages
  * 2. Format into prompt, call provider.query()
  * 3. While query active: continue polling, push new messages via provider.push()
- * 4. On result: write messages_out
+ * 4. On result: write outbound messages
  * 5. Mark messages completed
  * 6. Loop
  */
@@ -151,7 +130,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // query. Without this gate, a warm container keeps processing
     // (and potentially responding to) every accumulate-only batch, defeating
     // the "store as context, don't engage" contract. Host-side countDueMessages
-    // gates the same way for wake-from-cold (see src/db/session-db.ts).
+    // gates the same way for wake-from-cold through countDueMessages().
     if (!messages.some((m) => m.trigger === 1)) {
       await sleep(POLL_INTERVAL_MS);
       continue;
@@ -428,7 +407,7 @@ export async function processQuery(
   // will kill the container and messages get reset to pending.
   let pollInFlight = false;
   let endedForCommand = false;
-  let corruptionStreak = 0;
+  let mailboxFailureStreak = 0;
   const pollHandle = setInterval(() => {
     if (done || pollInFlight || endedForCommand) return;
     pollInFlight = true;
@@ -516,18 +495,12 @@ export async function processQuery(
         const errMsg = err instanceof Error ? err.message : String(err);
         log(`Follow-up poll error: ${errMsg}`);
 
-        // Detect SQLite cross-mount corruption (Docker Desktop macOS virtiofs /
-        // gRPC-FUSE coherency bug — the kernel page cache for the inbound.db
-        // bind mount can latch a torn snapshot mid-host-write, after which
-        // every fresh openInboundDb() in this process sees the same broken
-        // view. Reopening inside the container does NOT recover; only a fresh
-        // container mount does. Exit so the host sweep respawns us.
-        if (isCorruptionError(errMsg)) {
-          corruptionStreak += 1;
-          if (corruptionStreak >= CORRUPTION_STREAK_EXIT) {
+        if (getAgentMailbox().shouldRestartAfter?.(err)) {
+          mailboxFailureStreak += 1;
+          if (mailboxFailureStreak >= MAILBOX_FAILURE_STREAK_EXIT) {
             log(
-              `Follow-up poll: ${corruptionStreak} consecutive '${errMsg}' errors — ` +
-                `inbound.db page cache is poisoned. Exiting so host respawns with a fresh mount.`,
+              `Follow-up poll: ${mailboxFailureStreak} consecutive '${errMsg}' errors — ` +
+                `mailbox driver requested a fresh runner. Exiting so the host respawns it.`,
             );
             // Stop touching the heartbeat so host-sweep stale detection fires
             // promptly even if exit() races with in-flight async work.
@@ -538,7 +511,7 @@ export async function processQuery(
             setTimeout(() => process.exit(75), 100);
           }
         } else {
-          corruptionStreak = 0;
+          mailboxFailureStreak = 0;
         }
       } finally {
         pollInFlight = false;
@@ -1067,7 +1040,9 @@ export async function dispatchResultText(
       if (options.turnDelivered) {
         log(`<message to="${toName}"> in final result after a same-turn delivery — repeat, result door does not send`);
       } else {
-        log(`<message to="${toName}"> in final result but nothing was delivered this turn — nudging for a mid-turn resend`);
+        log(
+          `<message to="${toName}"> in final result but nothing was delivered this turn — nudging for a mid-turn resend`,
+        );
         scratchpadParts.push(`[not delivered — the result door does not send; to="${toName}"] ${body}`);
       }
       continue;

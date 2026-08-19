@@ -1,11 +1,5 @@
 /**
- * Inbound message operations (container side).
- *
- * Reads from inbound.db (host-owned, opened read-only).
- * Writes processing status to processing_ack in outbound.db (container-owned).
- *
- * The container never writes to inbound.db — all status tracking goes through
- * processing_ack. The host reads processing_ack to sync message lifecycle.
+ * Legacy runner-facing inbound API, backed by the registered mailbox.
  */
 import { getConfig } from '../config.js';
 import { getAgentMailbox } from '../mailbox/index.js';
@@ -65,8 +59,7 @@ function getMaxMessagesPerPrompt(): number {
 
 /**
  * Fetch pending messages that are due for processing.
- * Reads from inbound.db (read-only), filters against processing_ack in outbound.db
- * to skip messages already picked up by this or a previous container run.
+ * Fetch pending messages while excluding work already claimed by this runner.
  *
  * Selection is two-phase so accumulated context can never crowd a wake row
  * out of the batch: all due trigger=1 rows come first (oldest-first, up to
@@ -75,11 +68,11 @@ function getMaxMessagesPerPrompt(): number {
  * non-engaged group messages) newer than a due task row would push the task
  * itself out of the batch. The combined batch is returned in chronological
  * order (oldest first). Host's countDueMessages gates waking on trigger=1
- * separately (see src/db/session-db.ts).
+ * separately through the host mailbox contract.
  *
- * ORDER MATTERS: the processing_ack filter runs BEFORE the cap windowing.
- * Rows this container already claimed stay status='pending' in inbound.db
- * until the host sweep syncs the ack back (up to ~60s) — windowing first
+ * ORDER MATTERS: claim filtering runs BEFORE the cap windowing. Rows this
+ * runner already claimed can remain pending until the host sweep syncs state;
+ * windowing first
  * would let a cap-sized batch of those claimed rows fill the window, the
  * ack filter would then empty it, and genuinely new rows beyond the window
  * would be invisible for the rest of the turn.

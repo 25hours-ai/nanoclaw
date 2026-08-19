@@ -1,8 +1,5 @@
 /**
- * Outbound message operations (container side).
- *
- * Writes to outbound.db (container-owned).
- * The host polls this DB (read-only) for undelivered messages.
+ * Legacy runner-facing outbound API, backed by the registered mailbox.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -116,11 +113,13 @@ export function getRoutingBySeq(
   seq: number,
 ): { channel_type: string | null; platform_id: string | null; thread_id: string | null } | null {
   const routing = getAgentMailbox().operations.getRoutingBySeq(seq);
-  return routing && {
-    channel_type: routing.channelType,
-    platform_id: routing.platformId,
-    thread_id: routing.threadId,
-  };
+  return (
+    routing && {
+      channel_type: routing.channelType,
+      platform_id: routing.platformId,
+      thread_id: routing.threadId,
+    }
+  );
 }
 
 export function getUndeliveredMessages(): MessageOutRow[] {

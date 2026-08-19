@@ -1,10 +1,8 @@
 /**
  * Host sweep — periodic maintenance of all session mailboxes.
  *
- * With SQLite this reads runner-owned processing/container state through a
- * read-only outbound handle, writes host-owned inbound state, and only opens
- * outbound read-write to clear orphan claims after a crashed runner. Other
- * mailbox implementations preserve the same ownership behind the seam.
+ * Reads runner-owned processing/container state and maintains host-owned
+ * inbound state through the registered mailbox.
  *
  * Stuck / idle detection (replaces the old IDLE_TIMEOUT setTimeout + 10-min
  * heartbeat threshold):
@@ -40,17 +38,6 @@ import { heartbeatPath, withExistingMailboxSession } from './session-manager.js'
 import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 import type { ContainerState, InboundMailbox, OutboundMailbox } from './mailbox/index.js';
-
-/**
- * SQLite TIMESTAMP columns store UTC without a timezone marker. Date.parse
- * treats timezoneless ISO strings as local time, so on non-UTC hosts every
- * timestamp looks (TZ offset) hours stale — leading to spurious kill-claim
- * decisions on freshly-claimed messages. Append "Z" when no zone marker is
- * present so Date.parse interprets the string as UTC.
- */
-export function parseSqliteUtc(s: string): number {
-  return Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z');
-}
 
 const SWEEP_INTERVAL_MS = 60_000;
 // Absolute idle ceiling for a running container. If the heartbeat file hasn't
@@ -110,7 +97,7 @@ export function decideStuckAction(args: {
 
   const tolerance = Math.max(CLAIM_STUCK_MS, declaredBashMs ?? 0);
   for (const claim of claims) {
-    const claimedAt = parseSqliteUtc(claim.statusChanged);
+    const claimedAt = Date.parse(claim.statusChanged);
     if (Number.isNaN(claimedAt)) continue;
     const claimAge = now - claimedAt;
     if (claimAge <= tolerance) continue;
@@ -330,7 +317,7 @@ function resetStuckProcessingRows(
     // Already rescheduled for a future retry — don't bump tries again. The
     // wake path (sweep step 2) will fire when process_after elapses and a
     // fresh container will clean the orphan claim on startup.
-    if (msg.processAfter && parseSqliteUtc(msg.processAfter) > now) continue;
+    if (msg.processAfter && Date.parse(msg.processAfter) > now) continue;
 
     if (msg.tries >= MAX_TRIES) {
       inDb.markMessageFailed(msg.id);

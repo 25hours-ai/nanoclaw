@@ -29,7 +29,7 @@ describe('standalone setup mailbox composition', () => {
         'tsx',
         '--input-type=module',
         '--eval',
-        "const { run } = await import('./setup/register.ts'); const { getAgentMailbox } = await import('./src/mailbox/index.ts'); const { SqliteAgentMailbox } = await import('./src/mailbox/sqlite.ts'); console.log(`${typeof run}:${getAgentMailbox() instanceof SqliteAgentMailbox}`);",
+        "const { run } = await import('./setup/register.ts'); const { getAgentMailbox } = await import('./src/mailbox/index.ts'); const { SqliteAgentMailbox } = await import('./src/mailbox/sqlite/index.ts'); console.log(`${typeof run}:${getAgentMailbox() instanceof SqliteAgentMailbox}`);",
       ],
       { cwd: repoRoot, encoding: 'utf8' },
     );

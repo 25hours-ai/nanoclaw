@@ -35,7 +35,8 @@ import { isContainerRunning, killContainer, wakeContainer } from './container-ru
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { log } from './log.js';
 import { getAgentMailbox } from './mailbox/index.js';
-import { initSessionFolder, outboundDbPath, writeSessionMessage } from './session-manager.js';
+import { outboundDbPath } from './mailbox/sqlite/paths.js';
+import { initSessionFolder, writeSessionMessage } from './session-manager.js';
 
 const TEST_DIR = '/tmp/nanoclaw-test-host-sweep-grace';
 const AG = 'ag-test';

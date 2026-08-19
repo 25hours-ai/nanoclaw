@@ -8,8 +8,7 @@
  *
  * Mount structure:
  *   /workspace/
- *     inbound.db        ← built-in SQLite fallback only
- *     outbound.db       ← built-in SQLite fallback only
+ *     mailbox state     ← selected implementation
  *     .heartbeat        ← container touches for liveness detection
  *     outbox/           ← outbound files
  *     agent/            ← agent group folder (CLAUDE.md, container.json, working files)

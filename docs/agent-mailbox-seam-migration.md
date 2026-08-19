@@ -24,10 +24,10 @@ The moved and narrowed symbols map old to new as follows:
 
 | Before | After |
 | --- | --- |
-| `setContainerToolInFlight()` in `db/connection.ts` | `sqliteSetContainerToolInFlight()` is the SQLite primitive; import the seam-neutral `setContainerToolInFlight()` shim from `db/container-state.ts` or `db/index.ts` |
-| `clearContainerToolInFlight()` in `db/connection.ts` | `sqliteClearContainerToolInFlight()` is the SQLite primitive; import the seam-neutral `clearContainerToolInFlight()` shim from `db/container-state.ts` or `db/index.ts` |
-| `clearStaleProcessingAcks()` in `db/connection.ts` | `sqliteClearStaleProcessingAcks()` is the SQLite primitive; import the seam-neutral `clearStaleProcessingAcks()` shim from `db/container-state.ts` or `db/index.ts` |
-| `touchHeartbeat()` in `db/connection.ts` | `touchHeartbeat()` moved to `heartbeat.ts` and remains re-exported from `db/index.ts` |
+| `setContainerToolInFlight()` in the old `db/connection.ts` | import the seam-neutral `setContainerToolInFlight()` shim from `db/container-state.ts` or `db/index.ts` |
+| `clearContainerToolInFlight()` in the old `db/connection.ts` | import the seam-neutral `clearContainerToolInFlight()` shim from `db/container-state.ts` or `db/index.ts` |
+| `clearStaleProcessingAcks()` in the old `db/connection.ts` | import the seam-neutral `clearStaleProcessingAcks()` shim from `db/container-state.ts` or `db/index.ts` |
+| `touchHeartbeat()` in the old `db/connection.ts` | `touchHeartbeat()` moved to `heartbeat.ts` and remains re-exported from `db/index.ts` |
 | `DeliveryActionHandler(content, session, inDb)` | `DeliveryActionHandler(content, session)`; open a short `withMailboxSession()` inside the handler only when it needs mailbox state |
 | `writeSessionMessage({ trigger: 0 | 1, onWake: 0 | 1 })` | pass booleans: `trigger: false | true`, `onWake: false | true` |
 | inbound `kind: string` | use the closed `InboundKind` set: `chat`, `chat-sdk`, `task`, `webhook`, or `system` |
@@ -81,7 +81,7 @@ await withMailboxSession(agentGroupId, sessionId, (mailbox) => {
 Import `withMailboxSession` from `src/session-manager.ts`. Available semantic
 operations are declared in `src/mailbox/types.ts`. If custom SQL performs an
 operation absent from that contract, keep the customization explicitly
-SQLite-only by importing the low-level opener from `src/db/session-db.ts`, or
+SQLite-only by importing the low-level opener from `src/mailbox/sqlite/session-db.ts`, or
 add the smallest semantic operation required by every selected mailbox.
 
 Add `await` to mailbox writes and propagate `async` through custom callers:

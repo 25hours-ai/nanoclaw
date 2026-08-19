@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, it, expect, afterEach } from 'vitest';
 
-import { ensureSchema, openInboundDb } from '../../db/session-db.js';
+import { ensureSchema, openInboundDb } from './session-db.js';
 import {
   insertTaskRow,
   insertRecurrence,
@@ -18,7 +18,7 @@ import {
   updateTask,
   getCompletedRecurring,
   type RecurringMessage,
-} from './db.js';
+} from './tasks.js';
 
 const TEST_DIR = '/tmp/nanoclaw-scheduling-db-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
