@@ -15,7 +15,9 @@
  * So the wire lives in exactly one place (init-first-agent) and is never
  * duplicated across channel skills.
  */
-import { writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import * as p from '@clack/prompts';
 
@@ -24,11 +26,52 @@ import * as setupLog from '../logs.js';
 import { BACK_TO_CHANNEL_SELECTION, backGate, type ChannelFlowResult } from '../lib/back-nav.js';
 import { askOperatorRole, type OperatorRole } from '../lib/role-prompt.js';
 import { ensureAnswer, fail, runQuietChild } from '../lib/runner.js';
-import { hostExec, runSkill, type RunSkillOptions } from '../lib/skill-driver.js';
+import { channelsRemote, hostExec, runSkill, type RunSkillOptions } from '../lib/skill-driver.js';
 import { clearTemplatePick } from '../templates.js';
 import { getChannelPreStep, getCompanionSkills } from './companions.js';
 
 const DEFAULT_AGENT_NAME = 'Nano';
+
+const CHANNELS_BRANCH = 'channels';
+
+/**
+ * Trunk ships no channel payloads, and that includes companion skill
+ * directories — a declared companion may exist only on the channels registry
+ * branch (e.g. the flag-gated Slack agents skills). Materialize an absent
+ * directory from there — the same remote resolution and fetch/show mechanics
+ * the skill engine uses for `from-branch` payload copies — so runSkill has a
+ * document to apply. A directory already in the checkout short-circuits with
+ * no git traffic. Returns false when the skill can't be produced; the caller
+ * warns and skips it.
+ */
+export function materializeCompanionSkill(
+  skill: string,
+  projectRoot: string,
+  deps: { exec?: (command: string) => string; resolveRemote?: () => string } = {},
+): boolean {
+  const dir = `.claude/skills/${skill}`;
+  if (existsSync(join(projectRoot, dir))) return true;
+  const exec =
+    deps.exec ??
+    ((command: string) =>
+      execSync(command, { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+  try {
+    const remote = (deps.resolveRemote ?? channelsRemote(projectRoot))();
+    exec(`git fetch ${remote} ${CHANNELS_BRANCH}`);
+    const files = exec(`git ls-tree -r --name-only ${remote}/${CHANNELS_BRANCH} -- ${dir}`)
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (files.length === 0) return false;
+    for (const file of files) {
+      mkdirSync(dirname(join(projectRoot, file)), { recursive: true });
+      exec(`git show ${remote}/${CHANNELS_BRANCH}:${file} > ${file}`);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Apply a channel's declared companion skills (setup/channels/companions.ts)
@@ -57,6 +100,15 @@ async function applyCompanionSkills(
   const companions = getCompanionSkills(channel);
   let applied = false;
   for (const skill of companions) {
+    if (!materializeCompanionSkill(skill, projectRoot)) {
+      p.log.warn(
+        `Companion skill ${skill} is not in this checkout and could not be fetched from the ` +
+          `${CHANNELS_BRANCH} branch. The ${channel} channel works, but the capability that ` +
+          `skill adds is missing until you fetch and apply it: ` +
+          `pnpm exec tsx scripts/skill-apply.ts .claude/skills/${skill}`,
+      );
+      continue;
+    }
     const res = await runSkill(`.claude/skills/${skill}`, {
       projectRoot,
       exec: overrides.exec,

@@ -587,3 +587,57 @@ describe('backGate (first-prompt back-to-channel-selection)', () => {
     expect(wired).toHaveLength(0); // the wire was never reached
   });
 });
+
+describe('materializeCompanionSkill (channels-branch fetch for absent skill dirs)', () => {
+  const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'nc-companion-'));
+
+  it('skill dir already present: true, no git traffic', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    mkdirSync(join(root, '.claude/skills/slack-a2a-rooms'), { recursive: true });
+    const exec = vi.fn();
+    expect(materializeCompanionSkill('slack-a2a-rooms', root, { exec, resolveRemote: () => 'origin' })).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('absent dir: fetches the channels branch and materializes every listed file', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    const cmds: string[] = [];
+    const exec = (command: string): string => {
+      cmds.push(command);
+      if (command.includes('ls-tree')) {
+        return '.claude/skills/slack-agent-flow/SKILL.md\n.claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts\n';
+      }
+      return '';
+    };
+    expect(materializeCompanionSkill('slack-agent-flow', root, { exec, resolveRemote: () => 'upstream' })).toBe(true);
+    expect(cmds[0]).toBe('git fetch upstream channels');
+    expect(cmds[1]).toBe('git ls-tree -r --name-only upstream/channels -- .claude/skills/slack-agent-flow');
+    // One git-show per listed file, into the same relative path.
+    expect(cmds.slice(2)).toEqual([
+      'git show upstream/channels:.claude/skills/slack-agent-flow/SKILL.md > .claude/skills/slack-agent-flow/SKILL.md',
+      'git show upstream/channels:.claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts > .claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts',
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('branch does not carry the skill: false', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    const exec = (command: string): string => (command.includes('ls-tree') ? '\n' : '');
+    expect(materializeCompanionSkill('nope', root, { exec, resolveRemote: () => 'origin' })).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('git failure: false, never throws', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    const exec = (): string => {
+      throw new Error('no network');
+    };
+    expect(materializeCompanionSkill('slack-a2a-rooms', root, { exec, resolveRemote: () => 'origin' })).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+});

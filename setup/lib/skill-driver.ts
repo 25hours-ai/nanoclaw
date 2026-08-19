@@ -445,7 +445,7 @@ function defaultOnEvent(
 }
 
 /** Fork-aware registry-branch remote (same resolver setup/channels/slack.ts uses). */
-function channelsRemote(projectRoot: string): () => string {
+export function channelsRemote(projectRoot: string): () => string {
   return () =>
     execSync('source setup/lib/channels-remote.sh; resolve_channels_remote', {
       cwd: projectRoot,
