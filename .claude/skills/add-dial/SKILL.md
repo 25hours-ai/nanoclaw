@@ -19,11 +19,11 @@ safe to re-run; anything a parser can't apply falls back to the prose beside it.
 
 ## Apply
 
-### 1. Copy the adapter, pairing helper, tests, and container skill
+### 1. Copy the adapter, pairing helper, and tests
 
 Fetch the `channels` branch and copy the Dial adapter, its pairing store and
-user-agent helper (each with its test), the registration test, and the
-`dial-cli` container skill into place (overwrite — the branch is canonical):
+user-agent helper (each with its test), and the registration test into place
+(overwrite — the branch is canonical):
 
 ```nc:copy from-branch:channels
 src/channels/dial.ts
@@ -32,8 +32,15 @@ src/channels/dial-pairing.test.ts
 src/channels/dial-user-agent.ts
 src/channels/dial-user-agent.test.ts
 src/channels/dial-registration.test.ts
-container/skills/dial-cli/SKILL.md
 ```
+
+The `dial-cli` container skill is deliberately **not** copied here.
+`container/skills/` is mounted read-only into *every* agent container
+(`src/container-runner.ts`), and a group with `skills:'all'` picks up whatever
+it finds there — so shipping the skill with the adapter would hand it to agents
+on installs that never configured Dial. It is installed only by
+`add-dial-tool/add.sh`, under *Add phone superpowers* below, which is the step
+that actually provisions the CLI the skill documents.
 
 `dial.ts` imports `dial-user-agent.js` at module scope, so omitting that helper
 breaks the build and every test that loads the channel barrel.
@@ -302,7 +309,7 @@ from `dial number list` gets whichever number sorts first, which is unrelated to
 what's wired. Only this skill knows the answer, so it has to write it down:
 
 ```nc:run effect:external when:install_tool=yes
-printf '\n## This install'"'"'s line\n\nAlways pass `--from-number {{platform_id}}` on every `dial call` and `dial message`. That is the line this NanoClaw install is wired to; any other number on the account reaches nobody and replies to it are dropped.\n' >> container/skills/dial-cli/SKILL.md && for s in data/v2-sessions/*/*/; do [ -d "$s/.claude-shared/skills" ] && cp container/skills/dial-cli/SKILL.md "$s/.claude-shared/skills/dial-cli/SKILL.md" 2>/dev/null; done; echo "wired line recorded for the sandbox: {{platform_id}}"
+if [ ! -f container/skills/dial-cli/SKILL.md ]; then echo "dial-cli skill not installed (the tool installer did not complete) — skipping the wired-line note"; else printf '\n## This install'"'"'s line\n\nAlways pass `--from-number {{platform_id}}` on every `dial call` and `dial message`. That is the line this NanoClaw install is wired to; any other number on the account reaches nobody and replies to it are dropped.\n' >> container/skills/dial-cli/SKILL.md && for s in data/v2-sessions/*/*/; do [ -d "$s/.claude-shared/skills" ] && cp container/skills/dial-cli/SKILL.md "$s/.claude-shared/skills/dial-cli/SKILL.md" 2>/dev/null; done; echo "wired line recorded for the sandbox: {{platform_id}}"; fi
 ```
 
 ## Next Steps
