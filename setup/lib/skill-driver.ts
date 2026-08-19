@@ -107,10 +107,14 @@ export function clackResolveInput(
     const guarded = validateWithHelpEscape(check);
     // clearOnError wipes a rejected secret so the operator re-pastes cleanly
     // (a half-pasted token isn't left masked in the field).
-    // An either/or prompt renders as an arrow-key select — the options come
-    // straight from the validate regex (literalChoices). No re-ask loop and no
-    // `?` help-escape there: every choice is valid and self-describing.
-    const choices = meta.secret ? null : literalChoices(meta.validate);
+    // An either/or prompt renders as an arrow-key select — options come from
+    // an explicit `choices:` attr when declared (validate may accept MORE
+    // values than are offered, for modes that only arrive via pre-bound
+    // inputs), else straight from the validate regex (literalChoices). No
+    // re-ask loop and no `?` help-escape there: every choice is valid and
+    // self-describing.
+    const declared = meta.choices?.split('|').filter(Boolean);
+    const choices = meta.secret ? null : declared?.length ? declared : literalChoices(meta.validate);
     const ans = choices
       ? await p.select({ message: meta.question, options: choices.map((c) => ({ value: c, label: c })) })
       : meta.secret

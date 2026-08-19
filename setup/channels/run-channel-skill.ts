@@ -16,7 +16,7 @@
  * duplicated across channel skills.
  */
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import * as p from '@clack/prompts';
@@ -50,7 +50,11 @@ export function materializeCompanionSkill(
   deps: { exec?: (command: string) => string; resolveRemote?: () => string } = {},
 ): boolean {
   const dir = `.claude/skills/${skill}`;
-  if (existsSync(join(projectRoot, dir))) return true;
+  // Key the short-circuit on SKILL.md, not the directory: a directory left by
+  // an interrupted materialization would otherwise read as installed, and a
+  // missing SKILL.md parses as zero directives — "fully applied" while the
+  // feature is absent.
+  if (existsSync(join(projectRoot, dir, 'SKILL.md'))) return true;
   const exec =
     deps.exec ??
     ((command: string) =>
@@ -58,17 +62,21 @@ export function materializeCompanionSkill(
   try {
     const remote = (deps.resolveRemote ?? channelsRemote(projectRoot))();
     exec(`git fetch ${remote} ${CHANNELS_BRANCH}`);
-    const files = exec(`git ls-tree -r --name-only ${remote}/${CHANNELS_BRANCH} -- ${dir}`)
+    const files = exec(`git ls-tree -r --name-only '${remote}/${CHANNELS_BRANCH}' -- '${dir}'`)
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
     if (files.length === 0) return false;
     for (const file of files) {
       mkdirSync(dirname(join(projectRoot, file)), { recursive: true });
-      exec(`git show ${remote}/${CHANNELS_BRANCH}:${file} > ${file}`);
+      exec(`git show '${remote}/${CHANNELS_BRANCH}:${file}' > '${file}'`);
     }
     return true;
   } catch {
+    // Leave no partial directory behind — the SKILL.md short-circuit above
+    // makes a leftover half-fetched dir permanent on the next run. Deleting
+    // is safe here: this path only runs when the skill was absent on entry.
+    rmSync(join(projectRoot, dir), { recursive: true, force: true });
     return false;
   }
 }
@@ -99,13 +107,15 @@ async function applyCompanionSkills(
 ): Promise<void> {
   const companions = getCompanionSkills(channel);
   let applied = false;
+  let degraded = false;
   for (const skill of companions) {
     if (!materializeCompanionSkill(skill, projectRoot)) {
+      degraded = true;
       p.log.warn(
         `Companion skill ${skill} is not in this checkout and could not be fetched from the ` +
           `${CHANNELS_BRANCH} branch. The ${channel} channel works, but the capability that ` +
           `skill adds is missing until you fetch and apply it: ` +
-          `pnpm exec tsx scripts/skill-apply.ts .claude/skills/${skill}`,
+          `pnpm exec tsx setup/lib/skill-driver.ts .claude/skills/${skill}`,
       );
       continue;
     }
@@ -124,16 +134,28 @@ async function applyCompanionSkills(
       applied = true;
       continue;
     }
+    degraded = true;
     // Degraded, not fatal: the main channel install still works. Name the
     // skill and the exact re-apply command so the warning is actionable.
     p.log.warn(
       `Couldn't fully apply companion skill ${skill}. The ${channel} channel works, but the ` +
         `capability that skill adds stays degraded until you re-apply it: ` +
-        `pnpm exec tsx scripts/skill-apply.ts .claude/skills/${skill}`,
+        `pnpm exec tsx setup/lib/skill-driver.ts .claude/skills/${skill}`,
     );
   }
 
   if (!applied) return;
+  if (degraded) {
+    // A half-applied companion may have copied files and appended barrel
+    // imports before failing its build or tests — restarting could boot that
+    // state. The channel itself already works (its own restart ran before the
+    // companions), so hold the deferred restart until the operator repairs.
+    p.log.warn(
+      'Skipping the deferred service restart: a companion skill did not fully apply. ' +
+        'Re-apply it with the command above, then restart: bash setup/lib/restart.sh',
+    );
+    return;
+  }
   try {
     await (overrides.exec ?? hostExec(projectRoot))('bash setup/lib/restart.sh');
   } catch {

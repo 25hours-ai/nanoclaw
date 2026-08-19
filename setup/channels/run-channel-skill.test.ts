@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -591,17 +591,32 @@ describe('backGate (first-prompt back-to-channel-selection)', () => {
 describe('materializeCompanionSkill (channels-branch fetch for absent skill dirs)', () => {
   const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'nc-companion-'));
 
-  it('skill dir already present: true, no git traffic', async () => {
+  it('skill already present (SKILL.md exists): true, no git traffic', async () => {
     const { materializeCompanionSkill } = await import('./run-channel-skill.js');
     const root = makeRoot();
     mkdirSync(join(root, '.claude/skills/slack-a2a-rooms'), { recursive: true });
+    writeFileSync(join(root, '.claude/skills/slack-a2a-rooms/SKILL.md'), '# x\n');
     const exec = vi.fn();
     expect(materializeCompanionSkill('slack-a2a-rooms', root, { exec, resolveRemote: () => 'origin' })).toBe(true);
     expect(exec).not.toHaveBeenCalled();
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('absent dir: fetches the channels branch and materializes every listed file', async () => {
+  it('a leftover dir WITHOUT SKILL.md does not read as installed — it re-fetches', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    mkdirSync(join(root, '.claude/skills/slack-a2a-rooms/src'), { recursive: true });
+    const cmds: string[] = [];
+    const exec = (command: string): string => {
+      cmds.push(command);
+      return command.includes('ls-tree') ? '.claude/skills/slack-a2a-rooms/SKILL.md\n' : '';
+    };
+    expect(materializeCompanionSkill('slack-a2a-rooms', root, { exec, resolveRemote: () => 'origin' })).toBe(true);
+    expect(cmds[0]).toBe('git fetch origin channels');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('absent dir: fetches the channels branch and materializes every listed file, quoted', async () => {
     const { materializeCompanionSkill } = await import('./run-channel-skill.js');
     const root = makeRoot();
     const cmds: string[] = [];
@@ -614,11 +629,12 @@ describe('materializeCompanionSkill (channels-branch fetch for absent skill dirs
     };
     expect(materializeCompanionSkill('slack-agent-flow', root, { exec, resolveRemote: () => 'upstream' })).toBe(true);
     expect(cmds[0]).toBe('git fetch upstream channels');
-    expect(cmds[1]).toBe('git ls-tree -r --name-only upstream/channels -- .claude/skills/slack-agent-flow');
-    // One git-show per listed file, into the same relative path.
+    expect(cmds[1]).toBe("git ls-tree -r --name-only 'upstream/channels' -- '.claude/skills/slack-agent-flow'");
+    // One git-show per listed file, into the same relative path — quoted so a
+    // future filename with spaces fails loudly instead of word-splitting.
     expect(cmds.slice(2)).toEqual([
-      'git show upstream/channels:.claude/skills/slack-agent-flow/SKILL.md > .claude/skills/slack-agent-flow/SKILL.md',
-      'git show upstream/channels:.claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts > .claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts',
+      "git show 'upstream/channels:.claude/skills/slack-agent-flow/SKILL.md' > '.claude/skills/slack-agent-flow/SKILL.md'",
+      "git show 'upstream/channels:.claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts' > '.claude/skills/slack-agent-flow/src/modules/slack-agent-flow/index.ts'",
     ]);
     rmSync(root, { recursive: true, force: true });
   });
@@ -628,6 +644,24 @@ describe('materializeCompanionSkill (channels-branch fetch for absent skill dirs
     const root = makeRoot();
     const exec = (command: string): string => (command.includes('ls-tree') ? '\n' : '');
     expect(materializeCompanionSkill('nope', root, { exec, resolveRemote: () => 'origin' })).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('failure mid-materialization: false, and the partial dir is removed (no poisoned retry)', async () => {
+    const { materializeCompanionSkill } = await import('./run-channel-skill.js');
+    const root = makeRoot();
+    const exec = (command: string): string => {
+      if (command.includes('ls-tree')) return '.claude/skills/slack-agent-flow/SKILL.md\n';
+      if (command.includes('git show')) {
+        // Simulate the redirect creating the parent dir then failing.
+        mkdirSync(join(root, '.claude/skills/slack-agent-flow'), { recursive: true });
+        throw new Error('fatal: bad object');
+      }
+      return '';
+    };
+    expect(materializeCompanionSkill('slack-agent-flow', root, { exec, resolveRemote: () => 'origin' })).toBe(false);
+    // The dir created before the failing git-show must be gone.
+    expect(existsSync(join(root, '.claude/skills/slack-agent-flow'))).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 
