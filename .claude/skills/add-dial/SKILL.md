@@ -109,6 +109,22 @@ it's missing (for the full onboarding/auth reference, see the `dial-cli` skill o
 command -v dial || curl -fsSL https://getdial.ai/install | bash
 ```
 
+Now pin the CLI's **absolute** path into `.env`. The adapter shells out to `dial`
+to register its inbound command target, and it runs inside the NanoClaw service,
+which does not inherit your interactive shell's `PATH`. The CLI usually lands in
+a version-manager bin directory (`~/.nvm/versions/node/*/bin`, `~/node/bin`, …)
+that the service cannot see, so a bare `dial` fails with `ENOENT`, the command
+target is never registered, and the channel comes up connected but deaf — no
+inbound SMS or calls, with only a line in `logs/nanoclaw.error.log` to show for
+it. `DIAL_CLI_PATH` removes the guesswork; `dial.ts` already prefers it:
+
+```nc:run capture:dial_cli_path validate:^/.+ effect:fetch
+command -v dial
+```
+```nc:env-set
+DIAL_CLI_PATH={{dial_cli_path}}
+```
+
 Check whether you're already signed in:
 
 ```nc:run capture:signed_in=.auth.signedIn validate:^(true|false)$ effect:fetch
