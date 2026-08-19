@@ -207,15 +207,16 @@ outbound sales where prospects text back):
 Who may text this line — `owner` (only the phone you pair next; everyone else is refused) or `public` (anyone who knows the number reaches the agent)?
 ```
 
-```nc:run effect:external
-mkdir -p data/dial && printf '{"inboundAccess":"%s"}\n' "{{inbound_access}}" > data/dial/inbound-policy.json
-```
+Your answer is written to the line's own `unknown_sender_policy` when the line is
+registered below, after the restart (`ncl` is socket-only, so it needs the
+service up). It lives in the database from then on — per line, so a second number
+added later carries its own answer — and the adapter never rewrites it.
 
 ```nc:operator when:inbound_access=owner
-Locked to you: only the phone you pair in a moment can reach the agent on {{platform_id}}. Anyone else who texts it is refused — including people your agent calls, so they can't reply by text. Re-run this skill to change it.
+Locked to you: only the phone you pair in a moment can reach the agent on {{platform_id}}. Anyone else who texts it is refused — including people your agent calls, so they can't reply by text. To open it later: `ncl messaging-groups update --id <id> --unknown-sender-policy public` (find the id with `ncl messaging-groups list`).
 ```
 ```nc:operator when:inbound_access=public
-Open line: anyone who knows {{platform_id}} can text the agent and will get a reply. Each person gets their own conversation, but they all reach an agent holding your Dial account credentials — so don't hand out this number casually. Re-run this skill to lock it to just you.
+Open line: anyone who knows {{platform_id}} can text the agent and will get a reply. Each person gets their own conversation, but they all reach an agent holding your Dial account credentials — so don't hand out this number casually. To lock it to just you later: `ncl messaging-groups update --id <id> --unknown-sender-policy strict` (find the id with `ncl messaging-groups list`).
 ```
 
 ## Restart
@@ -238,6 +239,18 @@ Troubleshooting), so these never fail the run:
 ```
 ```nc:run effect:external
 .claude/skills/add-dial-tool/dial.sh local-target add cmd "$PWD/data/dial/handle-dial-event.sh" || true
+```
+
+Register the line, carrying the access choice from above onto its own row. One
+`platform_id` serves many correspondents, so it's a group (`--is-group 1`) and
+each texter becomes a thread inside it. Idempotent — a re-run returns the
+existing row, and does NOT reset a policy you have since changed with `ncl`:
+
+```nc:run effect:wire when:inbound_access=owner
+ncl messaging-groups create --channel-type dial --platform-id {{platform_id}} --is-group 1 --name "Dial {{platform_id}}" --unknown-sender-policy strict
+```
+```nc:run effect:wire when:inbound_access=public
+ncl messaging-groups create --channel-type dial --platform-id {{platform_id}} --is-group 1 --name "Dial {{platform_id}}" --unknown-sender-policy public
 ```
 
 ## Pair your phone

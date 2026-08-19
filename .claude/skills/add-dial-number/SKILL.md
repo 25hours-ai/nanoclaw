@@ -83,17 +83,25 @@ pnpm exec tsx scripts/q.ts data/v2.db "SELECT id, name FROM agent_groups"
 ### 3. Wire it as a public line
 
 Host service must be running (`ncl` is socket-only). No pairing is needed — the
-install already has an owner, and the line is public:
+install already has an owner.
+
+Decide who may text THIS number before you run the command: `public` for a line
+strangers can start conversations on, `strict` to admit only the owner and anyone
+you add as a member. It's a per-line choice — this number's answer is independent
+of your first line's, so a public support line can sit next to a private personal
+one:
 
 ```bash
-ncl messaging-groups create --channel-type dial --platform-id "+1NEWNUMBER" --name "<label>"
+ncl messaging-groups create --channel-type dial --platform-id "+1NEWNUMBER" --is-group 1 --name "<label>" --unknown-sender-policy public
 ncl wirings create --messaging-group-id <new-mg-id> --agent-group-id <ag-id>
 ```
 
-`unknown_sender_policy` defaults to `public` and `threads` to on from the
-adapter declaration, so anyone can reach the new number and each texter gets
-their own thread. (`/manage-channels` walks the same two commands if you'd
-rather be guided.)
+Pass `--unknown-sender-policy` explicitly. The adapter declares `strict` for
+creation, so omitting the flag gives you an owner-only line that silently refuses
+strangers — not what you want for a public number. `--is-group 1` is what makes
+each texter their own thread instead of collapsing everyone into one session;
+`threads` comes from the adapter declaration. (`/manage-channels` walks the same
+two commands if you'd rather be guided.)
 
 ### 4. Restart and verify
 
