@@ -6,8 +6,8 @@ description: Add Dial channel integration — a real phone number for SMS and AI
 # Add Dial Channel
 
 Adds [Dial](https://getdial.ai) — a real phone number for **SMS and AI voice
-calls**. Native adapter (no Chat SDK bridge): outbound via the `@getdial/sdk`
-client, inbound via Dial's CLI command-target daemon. NanoClaw doesn't ship
+calls**. Native adapter (no Chat SDK bridge): outbound via a direct POST to
+Dial's REST API, inbound via Dial's CLI command-target daemon. NanoClaw doesn't ship
 channels in trunk — this skill copies the Dial adapter, its pairing helper, and
 their tests in from the `channels` branch. The `pair-dial` setup step is
 maintained in trunk, so it is not copied here.
@@ -68,17 +68,16 @@ rebuild). The pairing handshake below spawns this step:
 ### 4. Install the packages
 
 Pinned to exact versions — the supply-chain policy rejects ranges and `latest`.
-`@getdial/sdk` is the adapter's outbound client; `qrcode` renders the scannable
-pairing card:
+`qrcode` renders the scannable pairing card:
 
 ```nc:dep
-@getdial/sdk@0.21.0
 qrcode@1.5.4
 ```
 
-`0.21.0` is a floor, not a preference: it added the `userAgent` option on
-`DialConfig` that `dial.ts` passes to `DialClient`. Older pins fail the build
-with `TS2353: 'userAgent' does not exist in type 'DialConfig'`.
+The adapter needs no Dial client library: it calls the documented
+`/api/v1/messages` endpoint with `fetch`. `@getdial/sdk` was dropped because it
+depends on `pubnub`, which pulls react-native, Metro and Hermes into the
+lockfile for what is a single HTTP POST.
 
 ### 5. Build and validate
 
@@ -93,9 +92,8 @@ pnpm exec vitest run src/channels/dial-registration.test.ts
 ```
 
 `dial-registration.test.ts` imports the real channel barrel and asserts the
-registry contains `dial` — it goes red if the import line drifts or `@getdial/sdk`
-isn't installed (the import throws). End-to-end SMS/voice is verified manually
-once the service runs.
+registry contains `dial` — it goes red if the import line drifts. End-to-end
+SMS/voice is verified manually once the service runs.
 
 ## Sign in to Dial
 
@@ -340,4 +338,4 @@ Dial number later, see the `/add-dial-number` skill.
 
 **"Pairing is paused for about N min."** Five wrong codes texted to the line inside 10 minutes locks that line for 15 — a brute-force guard, and while it holds even the correct code is refused. The wizard prints this warning when it happens; nothing is texted back to the sender, by design. Wait it out and re-run this step for a fresh code, or override the thresholds with `DIAL_PAIRING_MAX_ATTEMPTS` / `DIAL_PAIRING_ATTEMPT_WINDOW_MS` / `DIAL_PAIRING_COOLDOWN_MS` / `DIAL_PAIRING_TTL_MS`.
 
-**Everything green but no replies.** Run `pnpm exec vitest run src/channels/dial-registration.test.ts` — red means the barrel import or the `@getdial/sdk` install drifted, so re-run the Apply steps. If green, restart again (`bash setup/lib/restart.sh`) and check `logs/nanoclaw.error.log`.
+**Everything green but no replies.** Run `pnpm exec vitest run src/channels/dial-registration.test.ts` — red means the barrel import drifted, so re-run the Apply steps. If green, restart again (`bash setup/lib/restart.sh`) and check `logs/nanoclaw.error.log`.
