@@ -162,6 +162,18 @@ flow remains the authority. If the picker is unavailable, add the bot to the
 group manually and post `/start@{{bot_username}} connect` there to reach the
 same approval card.
 
+If the negative Telegram chat ID is already known, the fully manual `ncl`
+equivalent is:
+
+```bash
+ncl messaging-groups create --channel-type telegram --platform-id "telegram:<chat-id>" --name "<group-name>" --is-group 1
+ncl wirings create --channel-type telegram --platform-id "telegram:<chat-id>" --agent-group "<folder>" --session-mode shared
+```
+
+`wirings create` applies Telegram's group defaults and creates the companion
+destination row. Prefer `/connect_group` when the ID is unknown; it discovers
+the group and keeps the approval card in the loop.
+
 ## Channel Info
 
 - **type**: `telegram`

@@ -116,24 +116,9 @@ For separate agents, also ask for a folder name and optionally a different assis
 
 ## Add Channel Group
 
-When adding another group/chat on an already-configured platform (e.g. a second Telegram group):
-
-1. **Telegram:** have an owner or global admin send `/connect_group` in their paired bot DM and choose the group in Telegram's native picker. Telegram adds the bot and posts an addressed start command in the group; the existing unknown-channel gate then sends a registration card to an eligible owner/admin DM. Approve it and choose an existing or new agent. The picker carries no authority and nothing is wired before approval. If the picker is unavailable, add the bot manually and post `/start@<botname> connect` in the group to reach the same card.
-
-2. **Other channels:** read the channel's SKILL.md `## Channel Info` for terminology and how-to-find-id. Ask for the new group/chat ID, ask the isolation question, then register.
-
-For explicit Telegram wiring controls, use the CLI after the group is connected
-(for example, `ncl wirings update <id> --session-mode agent-shared`). If its
-negative Telegram chat ID is already known, the fully manual equivalent is:
-
-```bash
-ncl messaging-groups create --channel-type telegram --platform-id "telegram:<chat-id>" --name "<group-name>" --is-group 1
-ncl wirings create --channel-type telegram --platform-id "telegram:<chat-id>" --agent-group "<folder>" --session-mode shared
-```
-
-`wirings create` applies the adapter's group defaults and creates the companion
-destination row. Prefer `/connect_group` when the ID is unknown; it discovers
-the group through Telegram and keeps the existing approval card in the loop.
+When adding another group/chat on an already-configured platform, read the
+channel's SKILL.md `## Channel Info`, follow its current discovery instructions,
+ask the isolation question, then register.
 
 ## Change Wiring
 
