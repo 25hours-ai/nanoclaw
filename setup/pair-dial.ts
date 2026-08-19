@@ -169,8 +169,8 @@ export async function run(args: string[]): Promise<void> {
 
   // The inbound interceptor that consumes the code runs inside the live service;
   // touch the DB so a fresh install has migrations applied before the first match.
-  const db = initDb(path.join(DATA_DIR, 'v2.db'));
-  runMigrations(db);
+  const db = await initDb(path.join(DATA_DIR, 'v2.db'));
+  await runMigrations(db);
 
   // Lazy: the pairing store ships on the `channels` branch, so it only exists once
   // /add-dial has copied it in. Importing it here keeps module load adapter-free.
