@@ -335,7 +335,7 @@ describe('a credential the Slack service refuses', () => {
       ['bash', ['setup/registry-login.sh', '--require-verified', '--force']],
     ]);
     expect(state.brokerListWorkspaces.mock.calls).toEqual([['nct-stale'], ['nct-fresh']]);
-    expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', { team_id: 'T0TEAM123', name: 'Trusty' });
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', { team_id: 'T0TEAM123', name: 'Trusty', requested_by: 'U0OWNER12' });
     expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test' });
     expect(state.notes.at(-1)?.message).toContain('would not accept the saved credentials');
   });
@@ -375,5 +375,74 @@ describe('a credential the Slack service refuses', () => {
 
     expect(state.runInheritScript).toHaveBeenCalledOnce();
     expect(state.warns.at(-1)).toBe('The service said: socket hang up. Walking through manual app creation instead.');
+  });
+});
+
+describe('provision request metadata', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBrokerMocks();
+    state.notes.length = 0;
+    state.warns.length = 0;
+    state.installToken = 'nct-saved';
+    state.account = { token: 'nct-saved', api: 'https://registry.sandbox.nanoclaw.dev' };
+  });
+
+  /** Give the temp root a package.json so hostVersion() has something to read. */
+  function withPackageJson(root: string, version: string): string {
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'nanoclaw', version }));
+    return root;
+  }
+
+  it('broker provisioning carries requested_by and client_version when both are known', async () => {
+    const root = track(withPackageJson(rootWithModule(), '9.9.9-test'));
+    const core = fakeCore();
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.brokerProvision).toHaveBeenCalledExactlyOnceWith('nct-saved', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+      requested_by: 'U0OWNER12',
+      client_version: '9.9.9-test',
+    });
+    expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test' });
+  });
+
+  it('omits attribution it does not have — no connected_as, no readable package.json', async () => {
+    state.brokerListWorkspaces.mockResolvedValueOnce([
+      { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active' } as never,
+    ]);
+    const root = track(rootWithModule()); // no package.json in this root
+    const core = fakeCore();
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.brokerProvision).toHaveBeenCalledExactlyOnceWith('nct-saved', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+    });
+    // No connected_as also means no owner_handle prefill — unchanged behavior.
+    expect(result).toEqual({ connection: 'provisioned', bot_token: 'xoxb-test', app_token: 'xapp-test' });
+  });
+
+  it('manager-token path carries client_version but never requested_by (operator id is not known yet)', async () => {
+    const root = track(withPackageJson(rootWithModule(), '9.9.9-test'));
+    const core = fakeCore();
+    core.readManagerToken = vi.fn(() => 'xoxp-mgr');
+    const provisionManagedApp = vi.fn(async () => ({
+      appId: 'A0APP123',
+      appToken: 'xapp-test',
+      botToken: 'xoxb-test',
+      installUrl: '',
+    }));
+    core.provisionManagedApp = provisionManagedApp;
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(provisionManagedApp).toHaveBeenCalledExactlyOnceWith('xoxp-mgr', {
+      name: 'Trusty',
+      client_version: '9.9.9-test',
+    });
+    expect(state.brokerProvision).not.toHaveBeenCalled();
+    expect(state.runInheritScript).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test', app_token: 'xapp-test' });
   });
 });
