@@ -357,7 +357,10 @@ function readAccountCredential(): AccountCredential | undefined {
  */
 function resolveRegistryHost(fromBroker: string | undefined): string | undefined {
   if (fromBroker) {
-    return fromBroker.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0].toLowerCase();
+    return fromBroker
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+      .split('/')[0]
+      .toLowerCase();
   }
   const first = readAgentImagePin()?.split('/')[0];
   return first && (first.includes('.') || first.includes(':')) ? first.toLowerCase() : undefined;
@@ -628,10 +631,7 @@ interface IdpConfig {
  * and answers 404 from the marketing site, so "unreachable" is not a safe proxy
  * for "misconfigured" either.
  */
-type BrokerProbe =
-  | { kind: 'idp'; config: IdpConfig }
-  | { kind: 'no-idp' }
-  | { kind: 'not-a-broker'; detail: string };
+type BrokerProbe = { kind: 'idp'; config: IdpConfig } | { kind: 'no-idp' } | { kind: 'not-a-broker'; detail: string };
 
 async function probeBroker(api: string): Promise<BrokerProbe> {
   const fromEnv = str(process.env[ENV.clientId]);
@@ -648,7 +648,11 @@ async function probeBroker(api: string): Promise<BrokerProbe> {
 
   let res;
   try {
-    res = await http(`${api}/v1/auth-config`, { method: 'GET', headers: { accept: 'application/json' } }, PROBE_TIMEOUT_MS);
+    res = await http(
+      `${api}/v1/auth-config`,
+      { method: 'GET', headers: { accept: 'application/json' } },
+      PROBE_TIMEOUT_MS,
+    );
   } catch (err) {
     return { kind: 'not-a-broker', detail: message(err) };
   }
@@ -788,10 +792,7 @@ async function pollForIdpToken(cfg: IdpConfig, device: DeviceAuthorization): Pro
 
   for (;;) {
     if (Date.now() >= deadline) {
-      throw new LoginError(
-        'Timed out waiting for the sign-in to be approved.',
-        'Re-run setup to get a fresh code.',
-      );
+      throw new LoginError('Timed out waiting for the sign-in to be approved.', 'Re-run setup to get a fresh code.');
     }
     await sleep(intervalMs);
 
@@ -825,15 +826,9 @@ async function pollForIdpToken(cfg: IdpConfig, device: DeviceAuthorization): Pro
         intervalMs += SLOW_DOWN_STEP_MS;
         continue;
       case 'expired_token':
-        throw new LoginError(
-          'That sign-in code expired before it was approved.',
-          'Re-run setup to get a fresh code.',
-        );
+        throw new LoginError('That sign-in code expired before it was approved.', 'Re-run setup to get a fresh code.');
       case 'access_denied':
-        throw new LoginError(
-          'The sign-in was declined in the browser.',
-          'Re-run setup if that was a mistake.',
-        );
+        throw new LoginError('The sign-in was declined in the browser.', 'Re-run setup if that was a mistake.');
       case 'invalid_client':
       case 'unauthorized_client':
         throw misconfiguredClient();
@@ -977,11 +972,7 @@ const CONSENT_TEXT = CONSENT_LINES.join(' ');
  * withdrawal path a one-shot terminal prompt cannot offer; until it exists the
  * unsubscribe link in every email is that path.
  */
-async function maybeAskEmailConsent(
-  api: string,
-  cred: AccountCredential,
-  current: boolean | null,
-): Promise<void> {
+async function maybeAskEmailConsent(api: string, cred: AccountCredential, current: boolean | null): Promise<void> {
   if (current !== null) return;
 
   // clack rather than this file's own readline, so the question looks like the
@@ -1186,9 +1177,7 @@ export async function run(argv: string[]): Promise<void> {
   // Bare newline rather than a lead-in sentence: the prompt below says what
   // pressing Enter does, and the spacing keeps it off whatever printed last.
   console.log('');
-  const typed = await askLine(
-    '   Press Enter to open your browser and authenticate, or paste an enrollment code: ',
-  );
+  const typed = await askLine('   Press Enter to open your browser and authenticate, or paste an enrollment code: ');
   if (typed === undefined) {
     reportSkipped('declined');
     return;
