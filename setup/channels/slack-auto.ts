@@ -82,13 +82,25 @@ export interface ProvisionedApp {
   installError?: string;
 }
 
-/** The slice of src/provisioning/slack-app.ts this flow calls. */
+/**
+ * The slice of src/provisioning/slack-app.ts this flow calls.
+ *
+ * The optional attribution fields (requested_by, client_version) are
+ * optional metadata riding the service request — additive and
+ * safe against an installed core that predates them: the broker transport
+ * spreads its spec into the HTTP body verbatim (the service ignores fields it
+ * does not know), and the direct-Slack transport reads only name/description/
+ * agentView, so extra fields never reach the app manifest.
+ */
 export interface ProvisioningCore {
   BrokerHttpError: new (status: number, path: string, detail?: string) => Error & { status: number; path: string };
   brokerListWorkspaces(token: string): Promise<BrokerWorkspace[]>;
   brokerOauthUrl(token: string): Promise<{ url: string }>;
-  brokerProvision(token: string, spec: { team_id: string; name: string }): Promise<ProvisionedApp>;
-  provisionManagedApp(managerToken: string, spec: { name: string }): Promise<ProvisionedApp>;
+  brokerProvision(
+    token: string,
+    spec: { team_id: string; name: string; requested_by?: string; client_version?: string },
+  ): Promise<ProvisionedApp>;
+  provisionManagedApp(managerToken: string, spec: { name: string; client_version?: string }): Promise<ProvisionedApp>;
   readInstallToken(): string | undefined;
   readManagerToken(): string | undefined;
   /** Where the broker calls go — named in the message when they are refused. */
@@ -101,6 +113,22 @@ export interface BootstrapDeps {
   /** Run a shell command at root; returns stdout, throws on failure. */
   exec?: (command: string) => string;
   importModule?: (fileUrl: string) => Promise<ProvisioningCore>;
+}
+
+/**
+ * The installing host's package.json version — the clientRecord idiom from
+ * setup/registry-login.ts, against the same root the provisioning-core
+ * bootstrap uses. Undefined (rather than 'unknown') when unreadable, so the
+ * optional client_version field is simply omitted from the request.
+ */
+function hostVersion(root: string): string | undefined {
+  try {
+    const pkg: unknown = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
+    const version = (pkg as Record<string, unknown>)?.version;
+    return typeof version === 'string' && version.trim() ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -205,7 +233,8 @@ export async function maybeAutoProvisionSlack(
   setupLog.userInput('slack_provision_mode', mode);
   if (mode === 'manual') return undefined;
 
-  if (managerToken) return provisionDirect(core, managerToken, agentName);
+  const clientVersion = hostVersion(deps.root ?? process.cwd());
+  if (managerToken) return provisionDirect(core, managerToken, agentName, clientVersion);
 
   // The login driver is idempotent: it validates a matching saved credential
   // without opening a browser, and re-authenticates when its issuer or token
@@ -218,7 +247,7 @@ export async function maybeAutoProvisionSlack(
     p.log.warn('Not signed in — walking through manual app creation instead.');
     return undefined;
   }
-  return provisionViaBroker(core, validatedToken, agentName);
+  return provisionViaBroker(core, validatedToken, agentName, clientVersion);
 }
 
 /**
@@ -293,12 +322,16 @@ async function provisionDirect(
   core: ProvisioningCore,
   managerToken: string,
   name: string,
+  clientVersion: string | undefined,
 ): Promise<Record<string, string> | undefined> {
   const s = p.spinner();
   const start = Date.now();
   s.start(`Creating ${name} in Slack… (~30s — generating its avatar first)`);
   try {
-    const app = await core.provisionManagedApp(managerToken, { name });
+    const app = await core.provisionManagedApp(managerToken, {
+      name,
+      ...(clientVersion ? { client_version: clientVersion } : {}),
+    });
     return finishProvisioned(app, name, s, start, 'slack-provision');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -330,6 +363,7 @@ async function provisionViaBroker(
   core: ProvisioningCore,
   installToken: string,
   name: string,
+  clientVersion: string | undefined,
 ): Promise<Record<string, string> | undefined> {
   let token = installToken;
   let workspaces: BrokerWorkspace[];
@@ -392,7 +426,16 @@ async function provisionViaBroker(
   start = Date.now();
   s2.start(`Creating ${name} in ${workspace.team_name}… (~30s — generating its avatar first)`);
   try {
-    const app = await core.brokerProvision(token, { team_id: workspace.team_id, name });
+    // Optional request metadata: the service already records connected_as
+    // (it recorded who connected the workspace), so sending it as
+    // requested_by adds nothing sensitive — it names who asked for this app.
+    // Passed verbatim (Enterprise Grid W-ids included); absent when unknown.
+    const app = await core.brokerProvision(token, {
+      team_id: workspace.team_id,
+      name,
+      ...(workspace.connected_as ? { requested_by: workspace.connected_as } : {}),
+      ...(clientVersion ? { client_version: clientVersion } : {}),
+    });
     const inputs = finishProvisioned(app, name, s2, start, 'slack-broker-provision');
     // The broker knows who connected the workspace — pre-fill the member-ID
     // prompt too (only when it matches the skill's validator; Enterprise Grid
