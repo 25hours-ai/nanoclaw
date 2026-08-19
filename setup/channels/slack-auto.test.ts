@@ -229,7 +229,7 @@ describe('Slack managed-app sign-in', () => {
   });
 });
 
-describe('provision request attribution', () => {
+describe('provision request metadata', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.notes.length = 0;

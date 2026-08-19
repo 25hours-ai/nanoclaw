@@ -85,7 +85,7 @@ export interface ProvisionedApp {
  * The slice of src/provisioning/slack-app.ts this flow calls.
  *
  * The optional attribution fields (requested_by, client_version) are
- * fleet/operations metadata riding the provisioning request — additive and
+ * optional metadata riding the service request — additive and
  * safe against an installed core that predates them: the broker transport
  * spreads its spec into the HTTP body verbatim (the service ignores fields it
  * does not know), and the direct-Slack transport reads only name/description/
@@ -356,7 +356,7 @@ async function provisionViaBroker(
   start = Date.now();
   s2.start(`Creating ${name} in ${workspace.team_name}… (~30s — generating its avatar first)`);
   try {
-    // Attribution riding the request: the broker already knows connected_as
+    // Optional request metadata: the service already records connected_as
     // (it recorded who connected the workspace), so sending it as
     // requested_by adds nothing sensitive — it names who asked for this app.
     // Passed verbatim (Enterprise Grid W-ids included); absent when unknown.
