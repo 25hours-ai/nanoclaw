@@ -38,7 +38,7 @@ import { BACK_TO_CHANNEL_SELECTION } from './lib/back-nav.js';
 // — the wizard itself stays free of channel-specific imports.
 import { runChannelSkillWithPreStep } from './channels/run-channel-skill.js';
 import { runInheritScript } from './lib/inherit-script.js';
-import { pingCliAgent, type PingResult } from './lib/agent-ping.js';
+import { pingCliAgent, PING_AGENT_FOLDER, type PingResult } from './lib/agent-ping.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill } from './providers/install.js';
 // Provider payloads self-register their picker entry + auth on import.
@@ -551,7 +551,7 @@ async function main(): Promise<void> {
         running: 'Bringing your assistant online…',
         done: 'Assistant wired up.',
       },
-      ['--display-name', displayName!, '--agent-name', CLI_AGENT_NAME, '--folder', '_ping-test'],
+      ['--display-name', displayName!, '--agent-name', CLI_AGENT_NAME, '--folder', PING_AGENT_FOLDER],
     );
     if (!res.ok) {
       await fail(
@@ -576,7 +576,7 @@ async function main(): Promise<void> {
         const cleanupStart = Date.now();
         const cleanup = await spawnQuiet(
           'pnpm',
-          ['exec', 'tsx', 'scripts/delete-cli-agent.ts', '--folder', '_ping-test'],
+          ['exec', 'tsx', 'scripts/delete-cli-agent.ts', '--folder', PING_AGENT_FOLDER],
           cleanupRawLog,
         );
         setupLog.step(
