@@ -6,8 +6,8 @@ description: Add Dial channel integration — a real phone number for SMS and AI
 # Add Dial Channel
 
 Adds [Dial](https://getdial.ai) — a real phone number for **SMS and AI voice
-calls**. Native adapter (no Chat SDK bridge): outbound via a direct POST to
-Dial's REST API, inbound via Dial's CLI command-target daemon. NanoClaw doesn't ship
+calls**. Native adapter (no Chat SDK bridge): both directions go through the
+`dial` CLI — outbound via `dial message`, inbound via its command-target daemon. NanoClaw doesn't ship
 channels in trunk — this skill copies the Dial adapter, its pairing helper, and
 their tests in from the `channels` branch. The `pair-dial` setup step is
 maintained in trunk, so it is not copied here.
@@ -74,10 +74,12 @@ Pinned to exact versions — the supply-chain policy rejects ranges and `latest`
 qrcode@1.5.4
 ```
 
-The adapter needs no Dial client library: it calls the documented
-`/api/v1/messages` endpoint with `fetch`. `@getdial/sdk` was dropped because it
+The adapter needs no Dial client library: it shells out to the `dial` CLI, which
+this skill already requires for inbound. `@getdial/sdk` was dropped because it
 depends on `pubnub`, which pulls react-native, Metro and Hermes into the
-lockfile for what is a single HTTP POST.
+lockfile for what is a single send — and the CLI ships in lockstep with the Dial
+API, so a contract change arrives as a CLI release rather than breaking a
+request pinned in the adapter.
 
 ### 5. Build and validate
 
