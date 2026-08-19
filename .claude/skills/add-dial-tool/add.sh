@@ -80,15 +80,26 @@ KEY=""
 if [ -n "$KEY" ]; then
   log "read Dial API key from ${AUTH_FILE}"
   command -v onecli >/dev/null 2>&1 || { emit failed "onecli not found — run /init-onecli first"; exit 1; }
-  if onecli secrets list 2>/dev/null | grep -qi dial; then
-    log "Dial secret already in the OneCLI vault"
+  # Upsert, never create-if-absent. The vault is keyed by NAME, so an existing
+  # "Dial API" secret is not necessarily this account's: re-onboarding, switching
+  # accounts or rotating the key all leave a secret whose value points at the
+  # PREVIOUS account. Skipping the write there leaves the sandboxed agent
+  # authenticated as someone else — it lists that account's numbers and refuses
+  # to use the line this install just wired, reporting it as missing rather than
+  # as an auth problem. Always write the key the host is signed in with.
+  SID=$(onecli secrets list 2>/dev/null | jq -r '.data[] | select(.name | test("(?i)dial")) | .id' | head -1 || true)
+  if [ -n "$SID" ]; then
+    log "updating the Dial secret in OneCLI to this account's key"
+    onecli secrets update --id "$SID" --value "$KEY" \
+      --host-pattern "api.getdial.ai" >&2 \
+      || { emit failed "onecli secrets update failed"; exit 1; }
   else
     log "creating the Dial secret in OneCLI (host-pattern api.getdial.ai)"
     onecli secrets create --name "Dial API" --type generic --value "$KEY" \
       --host-pattern "api.getdial.ai" --header-name "Authorization" --value-format "Bearer {value}" >&2 \
       || { emit failed "onecli secrets create failed"; exit 1; }
+    SID=$(onecli secrets list 2>/dev/null | jq -r '.data[] | select(.name | test("(?i)dial")) | .id' | head -1 || true)
   fi
-  SID=$(onecli secrets list 2>/dev/null | jq -r '.data[] | select(.name | test("(?i)dial")) | .id' | head -1 || true)
   if [ -n "$SID" ]; then
     for a in $(onecli agents list 2>/dev/null | jq -r '.data[].id' 2>/dev/null || true); do
       CUR=$(onecli agents secrets --id "$a" 2>/dev/null | jq -r '[.data[]] | join(",")' 2>/dev/null || true)
