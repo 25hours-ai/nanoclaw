@@ -82,15 +82,15 @@ async function activate(): Promise<void> {
 // A wiring row can end up with an engage_mode value the type system doesn't
 // allow — the DB column has no CHECK constraint. Simulate that by bypassing
 // the type at the call site, exactly as a stale row or direct DB write would.
-function seedUnknownEngageModeWiring(): void {
-  createAgentGroup({
+async function seedUnknownEngageModeWiring(): Promise<void> {
+  await createAgentGroup({
     id: 'ag-1',
     name: 'Test Agent',
     folder: 'test-agent',
     agent_provider: null,
     created_at: now(),
   });
-  createMessagingGroup({
+  await createMessagingGroup({
     id: 'mg-1',
     channel_type: 'testchat',
     platform_id: 'testchat:C1',
@@ -100,7 +100,7 @@ function seedUnknownEngageModeWiring(): void {
     unknown_sender_policy: 'public',
     created_at: now(),
   });
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: 'mga-1',
     messaging_group_id: 'mg-1',
     agent_group_id: 'ag-1',
@@ -131,27 +131,27 @@ async function inbound(id: string, text: string): Promise<void> {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  runMigrations(initTestDb());
+  await runMigrations(await initTestDb());
   vi.clearAllMocks();
 });
 
 afterEach(async () => {
   await teardownChannelAdapters();
-  closeDb();
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
 describe('evaluateEngage with an unrecognized engage_mode', () => {
   it('fails closed (drops the message as no_agent_engaged) but logs a warning', async () => {
     await activate();
-    seedUnknownEngageModeWiring();
+    await seedUnknownEngageModeWiring();
 
     await inbound('m1', 'hello there');
 
-    const dropped = getUnregisteredSenders();
+    const dropped = await getUnregisteredSenders();
     expect(dropped).toHaveLength(1);
     expect(dropped[0].reason).toBe('no_agent_engaged');
 
