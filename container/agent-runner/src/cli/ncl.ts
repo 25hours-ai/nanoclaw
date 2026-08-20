@@ -7,9 +7,12 @@
  * instead of the Unix socket transport.
  *
  * Writes a cli_request system message to outbound.db, polls inbound.db
- * for the response. Self-contained — no imports from agent-runner.
+ * for the response. It imports only its local CLI input validator, not the
+ * surrounding agent-runner runtime.
  */
 import { Database } from 'bun:sqlite';
+
+import { readStdinJsonArgs, StdinJsonInputError } from './stdin-json.js';
 
 // ---------------------------------------------------------------------------
 // Frame types (mirrors src/cli/frame.ts on the host)
@@ -130,22 +133,29 @@ function pollResponse(requestId: string, timeoutMs: number): ResponseFrame | nul
 }
 
 // ---------------------------------------------------------------------------
-// Arg parsing (mirrors host-side client.ts)
+// Arg parsing (mirrors src/cli/parse-argv.ts on the host — keep flag handling
+// in sync when adding flags there)
 // ---------------------------------------------------------------------------
 
 function parseArgv(argv: string[]): {
   command: string;
   args: Record<string, unknown>;
   json: boolean;
+  stdinJson: boolean;
 } {
   const positional: string[] = [];
   const args: Record<string, unknown> = {};
   let json = false;
+  let stdinJson = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') {
       json = true;
+      continue;
+    }
+    if (a === '--stdin-json') {
+      stdinJson = true;
       continue;
     }
     if (a.startsWith('--')) {
@@ -172,12 +182,19 @@ function parseArgv(argv: string[]): {
   // segment as a target ID if the full name isn't a registered command.
   const command = positional.join('-');
 
-  return { command, args, json };
+  return { command, args, json, stdinJson };
 }
 
 function printUsage(): void {
   process.stdout.write(
-    ['Usage: ncl <command> [--key value ...] [--json]', '', 'Run `ncl help` to list available commands.', ''].join('\n'),
+    [
+      'Usage: ncl <command> [--key value ...] [--stdin-json] [--json]',
+      '',
+      '  --stdin-json  Read one bounded JSON object from stdin and merge it with argv flags.',
+      '',
+      'Run `ncl help` to list available commands.',
+      '',
+    ].join('\n'),
   );
 }
 
@@ -266,9 +283,25 @@ if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
   process.exit(0);
 }
 
-const { command, args, json } = parseArgv(argv);
+const { command, args, json, stdinJson } = parseArgv(argv);
+let requestArgs = args;
+if (stdinJson) {
+  if (process.stdin.isTTY) {
+    // Reading a TTY would silently block until the user types Ctrl-D.
+    process.stderr.write('ncl: --stdin-json requires piped stdin (e.g. `echo {...} | ncl ...`)\n');
+    process.exit(2);
+  }
+  try {
+    requestArgs = await readStdinJsonArgs(process.stdin, args);
+  } catch (err) {
+    if (!(err instanceof StdinJsonInputError)) throw err;
+    process.stderr.write(`ncl: ${err.message}\n`);
+    process.exit(2);
+  }
+}
+
 const requestId = generateId();
-const req: RequestFrame = { id: requestId, command, args };
+const req: RequestFrame = { id: requestId, command, args: requestArgs };
 
 writeRequest(req);
 
