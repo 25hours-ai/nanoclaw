@@ -20,14 +20,16 @@
 
 <div align="center">
 
-### Agents in Slack: one app per agent <img src="assets/slack-icon.svg" alt="" width="22" valign="middle">
+### <img src="https://img.shields.io/badge/NEW!-2EB67D?style=for-the-badge" alt="NEW!" valign="middle"> Agents in Slack: one app per agent <img src="assets/slack-icon.svg" alt="" width="22" valign="middle">
 
-Setup provisions each agent its own Slack app — manifest, avatar, and workspace install, no tokens to paste.
+Setup provisions each agent its own Slack app: manifest, avatar, and workspace install, no tokens to paste.
 Spawn teammates from chat: every one gets its own bot identity, container, and memory, with shared rooms and canvases.
 
-[![Try it out](https://img.shields.io/badge/Try%20it%20out%20%E2%86%92-4A154B?style=for-the-badge)](https://nanoclaw.dev/slack)
+[![Quick Start](https://img.shields.io/badge/Quick%20Start%20%E2%86%92-4A154B?style=for-the-badge)](#quick-start)
 
 </div>
+
+---
 
 ## Why I Built NanoClaw
 
