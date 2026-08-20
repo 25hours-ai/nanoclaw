@@ -2,11 +2,8 @@
  * Registration for automatic Slack app provisioning — the default Slack
  * experience.
  *
- * This shim is the only piece of the feature on the wizard's boot path. The
- * managed flow registers by default; setting NANOCLAW_SLACK_AGENTS=0 (or
- * passing `--no-slack-agents` to nanoclaw.sh) opts out, for installs that
- * want a single plain bot with no provisioning offer — the wizard then runs
- * exactly as a build without the feature. The flow itself (slack-auto.ts
+ * This shim is the only piece of the feature on the wizard's boot path;
+ * it always registers. The flow itself (slack-auto.ts
  * plus the provisioning core it bootstraps from the channels branch — the
  * module's permanent home is the add-slack channel payload, at
  * src/provisioning/slack-app.ts on an installed tree) loads via dynamic
@@ -26,12 +23,9 @@
  *
  * The register functions are injected by the caller (companions.ts passes
  * `registerChannelPreStep` / `registerCompanionSkills`) so this module has
- * zero runtime imports — no import cycle with the registry, nothing
- * evaluated beyond the env check.
+ * zero runtime imports — no import cycle with the registry.
  */
 import type { ChannelPreStep } from './companions.js';
-
-export const SLACK_AGENTS_FLAG = 'NANOCLAW_SLACK_AGENTS';
 
 /**
  * Applied in order after `/add-slack`: the room admission policy first (the
@@ -42,9 +36,7 @@ export const SLACK_AGENTS_COMPANION_SKILLS = ['slack-a2a-rooms', 'slack-agent-fl
 export function registerSlackAutoProvision(
   register: (channel: string, step: ChannelPreStep) => void,
   registerCompanions: (channel: string, skills: readonly string[]) => void,
-  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (env[SLACK_AGENTS_FLAG] === '0') return;
   register('slack', async (agentName) => {
     const { maybeAutoProvisionSlack } = await import('./slack-auto.js');
     return maybeAutoProvisionSlack(agentName);

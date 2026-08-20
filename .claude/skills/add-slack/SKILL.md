@@ -14,9 +14,8 @@ directives); all idempotent.
 This is the base Slack experience: one bot, DM and channel chat. The Slack
 **agents** feature — child bots provisioned from `create_agent`, shared rooms,
 canvases, DM onboarding — ships separately in `/slack-a2a-rooms` +
-`/slack-agent-flow`; the setup wizard applies them automatically (pass `--no-slack-agents` for a
-plain single-bot install), and they can be applied on top of this install at
-any time.
+`/slack-agent-flow`; the setup wizard applies them automatically, and they can be applied on top
+of this install at any time.
 
 ## Apply
 

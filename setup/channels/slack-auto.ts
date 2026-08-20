@@ -20,9 +20,9 @@
  * payloads (git fetch + git show, remote resolution included). Setup runs
  * under tsx, so importing the fetched .ts file directly works.
  *
- * Loaded through slack-auto-register.ts — the default Slack experience,
- * with NANOCLAW_SLACK_AGENTS=0 as the opt-out — so a wizard run that skips
- * never evaluates this file or its strings.
+ * Loaded through slack-auto-register.ts via dynamic import, so a wizard run
+ * that never reaches the Slack pre-step never evaluates this file or its
+ * strings.
  *
  * Returns undefined to mean "walk the manual path" — never throws for
  * expected declines (not signed in, provisioning refused, cancel) or for
