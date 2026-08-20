@@ -68,7 +68,7 @@ export const REJECT_VALUE = 'reject';
 // This deliberately does not claim "the same authority as you": approved members cannot run admin commands,
 // which command-gate.ts gates on hasAdminPrivilege, but it names the real shared context, workspace, memory, and tool blast radius.
 export const AGENT_ACCESS_SCOPE_WARNING =
-  "Anyone approved here can direct the agent and reach anything it can reach — including other conversations' context, its workspace files and memory, and any connected tools.";
+  "Anyone approved here can interact with the agent and potentially access anything the agent can access, including other conversations' context, its workspace files and memory, and any connected tools.";
 
 // ── Channel-card interceptor seam (B2/D24) ──
 // A channel module can claim the escalation for its own channel type before
