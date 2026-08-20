@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   account: undefined as { api?: string; token: string } | undefined,
   installToken: undefined as string | undefined,
+  infos: [] as string[],
   notes: [] as Array<{ message: string; title: string }>,
   warns: [] as string[],
   decided: false,
@@ -29,7 +30,10 @@ const state = vi.hoisted(() => ({
 vi.mock('@clack/prompts', () => ({
   note: vi.fn((message: string, title: string) => state.notes.push({ message, title })),
   spinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
-  log: { warn: vi.fn((message: string) => state.warns.push(message)) },
+  log: {
+    info: vi.fn((message: string) => state.infos.push(message)),
+    warn: vi.fn((message: string) => state.warns.push(message)),
+  },
 }));
 
 vi.mock('../logs.js', () => ({ userInput: vi.fn(), step: vi.fn() }));
@@ -48,6 +52,7 @@ vi.mock('../lib/registry-state.js', () => ({
 vi.mock('../lib/runner.js', () => ({ ensureAnswer: <T>(answer: T): T => answer }));
 vi.mock('../lib/theme.js', () => ({ wrapForGutter: (message: string): string => message }));
 
+import { brightSelect } from '../lib/bright-select.js';
 import {
   PROVISIONING_MODULE,
   loadProvisioningCore,
@@ -211,6 +216,29 @@ describe('provisioning-core bootstrap', () => {
     const result = spawnSync(tsxBin, [probePath], { encoding: 'utf-8' });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('loaded-ts');
+  });
+});
+
+describe('setup rerun credential reuse', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.infos.length = 0;
+  });
+
+  it('reuses a saved bot token without loading or offering automatic provisioning again', async () => {
+    const root = track(rootWithModule());
+    fs.writeFileSync(path.join(root, '.env'), 'SLACK_BOT_TOKEN=xoxb-existing\n');
+    const importModule = vi.fn(async () => {
+      throw new Error('provisioning core must not load on a rerun');
+    });
+
+    await expect(maybeAutoProvisionSlack('Hubert', { root, importModule })).resolves.toBeUndefined();
+
+    expect(brightSelect).not.toHaveBeenCalled();
+    expect(importModule).not.toHaveBeenCalled();
+    expect(state.infos).toEqual([
+      'Hubert already has a Slack app connected from a previous run — reusing its saved credentials instead of creating a new one.',
+    ]);
   });
 });
 
