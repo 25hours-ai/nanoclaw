@@ -200,6 +200,12 @@ export interface DeclineAndNotifyInput {
   senderIdentity: string | null; // namespaced user id, when resolvable
   senderName: string | null;
   event: InboundEvent;
+  /** Override when the decline is scoped to the conversation, not the sender. */
+  dedupeKey?: string;
+  /** Override the sender-facing decline copy. */
+  declineText?: string;
+  /** Override the owner-facing FYI copy. */
+  fyiText?: string;
 }
 
 /**
@@ -214,7 +220,7 @@ export async function declineAndNotify(input: DeclineAndNotifyInput): Promise<vo
   const { messagingGroupId, agentGroupId, senderIdentity, senderName, event } = input;
 
   // Dedupe: at most one decline + FYI per (sender, messaging group) per 24h.
-  const senderKey = senderIdentity ?? UNKNOWN_SENDER_KEY;
+  const senderKey = input.dedupeKey ?? senderIdentity ?? UNKNOWN_SENDER_KEY;
   const stampedAt = await getDeclineStampAt(messagingGroupId, senderKey);
   if (stampedAt && Date.now() - new Date(stampedAt).getTime() < DECLINE_NOTIFY_DEDUPE_MS) {
     log.debug('decline_notify deduped — declined within the last 24h', { messagingGroupId, senderIdentity });
@@ -251,7 +257,7 @@ export async function declineAndNotify(input: DeclineAndNotifyInput): Promise<vo
   // a per-agent bot identity registered as its own adapter instance
   // answers as itself.
   const owner = await ownerDisplayName();
-  const declineText = `I'm ${owner ?? 'my owner'}'s personal agent — I can't help you directly.`;
+  const declineText = input.declineText ?? `I'm ${owner ?? 'my owner'}'s personal agent — I can't help you directly.`;
   try {
     await adapter.deliver(
       event.channelType,
@@ -282,7 +288,9 @@ export async function declineAndNotify(input: DeclineAndNotifyInput): Promise<vo
   const senderDisplay = senderName && senderName.length > 0 ? senderName : (senderIdentity ?? 'An unknown sender');
   const who =
     senderIdentity && senderDisplay !== senderIdentity ? `${senderDisplay} (${senderIdentity})` : senderDisplay;
-  const fyiText = `FYI: ${who} DMed your agent on ${event.channelType} — I sent a polite decline. Allow them any time with \`ncl members add\`.`;
+  const fyiText =
+    input.fyiText ??
+    `FYI: ${who} DMed your agent on ${event.channelType} — I sent a polite decline. Allow them any time with \`ncl members add\`.`;
   try {
     await adapter.deliver(
       target.messagingGroup.channel_type,
