@@ -126,4 +126,35 @@ describe('SQLite runner mailbox canonical serialization', () => {
       },
     ]);
   });
+
+  test('skips malformed pending inbound rows instead of crashing the runner', () => {
+    const { inbound } = initTestSessionDb();
+    inbound
+      .prepare(
+        `INSERT INTO messages_in
+           (id, seq, kind, timestamp, status, process_after, recurrence, series_id, tries, trigger,
+            platform_id, channel_type, thread_id, content, on_wake)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'bad-row',
+        2,
+        'not-a-kind',
+        new Date().toISOString(),
+        'pending',
+        null,
+        null,
+        null,
+        0,
+        1,
+        null,
+        null,
+        null,
+        '{}',
+        0,
+      );
+
+    const mailbox = new SqliteAgentMailbox();
+    expect(mailbox.getPendingMessages(10, false)).toEqual([]);
+  });
 });

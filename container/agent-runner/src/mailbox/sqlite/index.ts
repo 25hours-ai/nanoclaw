@@ -81,6 +81,15 @@ function outboundMessage(row: MessageOutRow): OutboundMessage {
   });
 }
 
+function parseInboundMessage(row: MessageInRow): InboundMessage | undefined {
+  try {
+    return inboundMessage(row);
+  } catch (error) {
+    console.error(`[agent-runner] Skipping invalid inbound mailbox row ${row.id}: ${String(error)}`);
+    return undefined;
+  }
+}
+
 export class SqliteAgentMailbox implements AgentMailbox {
   readonly operations: MailboxOperations = this;
 
@@ -104,7 +113,10 @@ export class SqliteAgentMailbox implements AgentMailbox {
   }
 
   getPendingMessages(limit: number, isFirstPoll: boolean): InboundMessage[] {
-    return sqliteGetPendingMessages(isFirstPoll, limit).map(inboundMessage);
+    return sqliteGetPendingMessages(isFirstPoll, limit).flatMap((row) => {
+      const message = parseInboundMessage(row);
+      return message ? [message] : [];
+    });
   }
 
   markMessages(ids: string[], status: ProcessingStatus): void {

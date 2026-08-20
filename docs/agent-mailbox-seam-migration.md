@@ -12,7 +12,7 @@ mailbox calls or public types whose shape changed:
 ```bash
 rg -n "openInboundDb|withInboundDb|openOutboundDb|openOutboundDbRw" src .claude/skills container/agent-runner/src
 rg -n "writeSessionMessage|writeSessionRouting|writeOutboundDirect|writeMessageOut|createScheduledTask|restartAgentGroupContainers|createAgentFromTemplate" src .claude/skills container/agent-runner/src
-rg -n "setContainerToolInFlight|clearContainerToolInFlight|clearStaleProcessingAcks|touchHeartbeat|DeliveryActionHandler" src .claude/skills container/agent-runner/src
+rg -n "setContainerToolInFlight|clearContainerToolInFlight|clearStaleProcessingAcks|touchHeartbeat|DeliveryActionHandler|PostDeliveryHook" src .claude/skills container/agent-runner/src
 rg -n "(trigger|onWake)\\s*:\\s*[01]\\b|kind\\s*:\\s*string" src .claude/skills container/agent-runner/src
 ```
 
@@ -29,6 +29,7 @@ The moved and narrowed symbols map old to new as follows:
 | `clearStaleProcessingAcks()` in the old `db/connection.ts` | import the seam-neutral `clearStaleProcessingAcks()` shim from `db/container-state.ts` or `db/index.ts` |
 | `touchHeartbeat()` in the old `db/connection.ts` | `touchHeartbeat()` moved to `heartbeat.ts` and remains re-exported from `db/index.ts` |
 | `DeliveryActionHandler(content, session, inDb)` | `DeliveryActionHandler(content, session)`; open a short `withMailboxSession()` inside the handler only when it needs mailbox state |
+| `PostDeliveryHook` message fields `platform_id`, `channel_type`, `thread_id`, `in_reply_to` | use `platformId`, `channelType`, `threadId`, `inReplyTo` |
 | `writeSessionMessage({ trigger: 0 | 1, onWake: 0 | 1 })` | pass booleans: `trigger: false | true`, `onWake: false | true` |
 | inbound `kind: string` | use the closed `InboundKind` set: `chat`, `chat-sdk`, `task`, `webhook`, or `system` |
 
