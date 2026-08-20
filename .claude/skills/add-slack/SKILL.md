@@ -16,6 +16,9 @@ This is the base Slack experience: one bot, DM and channel chat. The Slack
 canvases, DM onboarding — ships separately in `/slack-a2a-rooms` +
 `/slack-agent-flow`; the setup wizard applies them automatically, and they can be applied on top
 of this install at any time.
+Existing classic installs that want the Slack agents experience should use
+`/migrate-slack-agents` rather than re-running this skill (classic keeps
+working; that migration is optional).
 
 ## Apply
 
