@@ -8,8 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   account: undefined as { api?: string; token: string } | undefined,
   installToken: undefined as string | undefined,
+  selectLabels: [] as string[],
+  selectPrompts: [] as Array<{
+    message: string;
+    options: Array<{ value: unknown; label: string; hint?: string }>;
+  }>,
   notes: [] as Array<{ message: string; title: string }>,
+  infos: [] as string[],
   warns: [] as string[],
+  userInput: vi.fn(),
   decided: false,
   imageSource: 'local' as 'local' | 'hardened',
   writeImageSource: vi.fn(),
@@ -29,13 +36,27 @@ const state = vi.hoisted(() => ({
 vi.mock('@clack/prompts', () => ({
   note: vi.fn((message: string, title: string) => state.notes.push({ message, title })),
   spinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
-  log: { warn: vi.fn((message: string) => state.warns.push(message)) },
+  log: {
+    info: vi.fn((message: string) => state.infos.push(message)),
+    warn: vi.fn((message: string) => state.warns.push(message)),
+  },
 }));
 
-vi.mock('../logs.js', () => ({ userInput: vi.fn(), step: vi.fn() }));
-vi.mock('../lib/bright-select.js', () => ({ brightSelect: vi.fn(async () => 'auto') }));
+vi.mock('../logs.js', () => ({ userInput: state.userInput, step: vi.fn() }));
+vi.mock('../lib/bright-select.js', () => ({
+  brightSelect: vi.fn(
+    async (prompt: { message: string; options: Array<{ value: unknown; label: string; hint?: string }> }) => {
+      state.selectPrompts.push(prompt);
+      const label = state.selectLabels.shift();
+      return label === undefined
+        ? prompt.options[0]?.value
+        : prompt.options.find((option) => option.label === label)?.value;
+    },
+  ),
+}));
 vi.mock('../lib/browser.js', () => ({ confirmThenOpen: vi.fn() }));
 vi.mock('../lib/inherit-script.js', () => ({ runInheritScript: state.runInheritScript }));
+vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => undefined) }));
 vi.mock('../lib/registry-state.js', () => ({
   REGISTRY_LOGIN_SCRIPT: 'setup/registry-login.sh',
   clearImageSource: state.clearImageSource,
@@ -91,6 +112,9 @@ function fakeCore(): ProvisioningCore {
  * the next test's starting state.
  */
 function resetBrokerMocks(): void {
+  state.selectLabels.length = 0;
+  state.selectPrompts.length = 0;
+  state.infos.length = 0;
   state.runInheritScript.mockReset();
   state.runInheritScript.mockImplementation(async () => 0);
   state.brokerListWorkspaces.mockReset();
@@ -229,9 +253,10 @@ describe('Slack managed-app sign-in', () => {
     };
   });
 
-  it('validates a saved credential before using it and shows only its service origin', async () => {
+  it('saved credential validates silently without --force and shows only its service origin', async () => {
     const root = track(rootWithModule());
     const core = fakeCore();
+    state.selectLabels.push('Create it for me', 'Use NanoCo');
     const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
 
     expect(state.runInheritScript).toHaveBeenCalledOnce();
@@ -259,6 +284,175 @@ describe('Slack managed-app sign-in', () => {
     ]);
     expect(state.notes[0].message).not.toContain('password');
     expect(state.notes[0].message).not.toContain('secret');
+    expect(state.selectPrompts).toHaveLength(2);
+    expect(state.selectPrompts[1].message).toBe('Use this Slack workspace?');
+  });
+});
+
+describe('Slack broker workspace choice', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBrokerMocks();
+    state.notes.length = 0;
+    state.warns.length = 0;
+    state.decided = true;
+    state.imageSource = 'hardened';
+    state.installToken = 'nct-saved';
+    state.account = { token: 'nct-saved', api: 'https://registry.sandbox.nanoclaw.dev' };
+  });
+
+  it('single workspace + Use <name> provisions the confirmed team', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.selectLabels.push('Create it for me', 'Use NanoCo');
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    const workspacePrompt = state.selectPrompts.find((prompt) => prompt.message === 'Use this Slack workspace?');
+    expect(workspacePrompt?.options.map((option) => option.label)).toEqual([
+      'Use NanoCo',
+      'Connect a different workspace',
+      'Set up manually instead',
+    ]);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+      requested_by: 'U0OWNER12',
+    });
+    expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'T0TEAM123');
+  });
+
+  it('single workspace + Connect a different workspace waits for and provisions the new team', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    const oldWorkspace = {
+      team_id: 'T0TEAM123',
+      team_name: 'NanoCo',
+      status: 'active',
+      connected_as: 'U0OWNER12',
+    };
+    const newWorkspace = {
+      team_id: 'T1TEAM456',
+      team_name: 'NewCo',
+      status: 'active',
+      connected_as: 'U1OWNER34',
+    };
+    state.selectLabels.push('Create it for me', 'Connect a different workspace');
+    state.brokerListWorkspaces
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([oldWorkspace, newWorkspace]);
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(core.brokerOauthUrl).toHaveBeenCalledExactlyOnceWith('nct-saved');
+    expect(state.brokerListWorkspaces).toHaveBeenCalledTimes(3);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T1TEAM456',
+      name: 'Trusty',
+      requested_by: 'U1OWNER34',
+    });
+    expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'T1TEAM456');
+  });
+
+  it('reconnecting the same workspace completes when connected_at changes', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    const oldWorkspace = {
+      team_id: 'T0TEAM123',
+      team_name: 'NanoCo',
+      status: 'active',
+      connected_as: 'U0OWNER12',
+      connected_at: '2026-08-20T13:40:00.000Z',
+    };
+    const reconnectedWorkspace = {
+      ...oldWorkspace,
+      connected_at: '2026-08-20T13:47:41.414Z',
+    };
+    state.selectLabels.push('Create it for me', 'Connect a different workspace');
+    state.brokerListWorkspaces
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([reconnectedWorkspace]);
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.brokerListWorkspaces).toHaveBeenCalledTimes(3);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+      requested_by: 'U0OWNER12',
+    });
+    expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'T0TEAM123');
+  });
+
+  it('Set up manually instead returns to the manual path without provisioning', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    state.selectLabels.push('Create it for me', 'Set up manually instead');
+
+    await expect(maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core })).resolves.toBeUndefined();
+
+    expect(state.brokerProvision).not.toHaveBeenCalled();
+    expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'manual');
+    expect(state.infos).toEqual(['Okay — walking through manual app creation instead.']);
+  });
+
+  it('no workspace connected yet: connect first, then the picker confirms the new team', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    const newWorkspace = {
+      team_id: 'T1TEAM456',
+      team_name: 'NewCo',
+      status: 'active',
+      connected_as: 'U1OWNER34',
+    };
+    state.selectLabels.push('Create it for me', 'Use NewCo');
+    state.brokerListWorkspaces.mockResolvedValueOnce([]).mockResolvedValueOnce([newWorkspace]);
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(core.brokerOauthUrl).toHaveBeenCalledExactlyOnceWith('nct-saved');
+    const workspacePrompt = state.selectPrompts.find((prompt) => prompt.message === 'Use this Slack workspace?');
+    expect(workspacePrompt?.options.map((option) => option.label)).toEqual([
+      'Use NewCo',
+      'Connect a different workspace',
+      'Set up manually instead',
+    ]);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T1TEAM456',
+      name: 'Trusty',
+      requested_by: 'U1OWNER34',
+    });
+  });
+
+  it('a declined workspace stays out of the re-prompt when several new teams arrive', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    const oldWorkspace = { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' };
+    const betaWorkspace = { team_id: 'T1BETA456', team_name: 'BetaCo', status: 'active', connected_as: 'U1OWNER34' };
+    const gammaWorkspace = { team_id: 'T2GAMMA78', team_name: 'GammaCo', status: 'active', connected_as: 'U2OWNER56' };
+    state.selectLabels.push('Create it for me', 'Connect a different workspace', 'BetaCo');
+    state.brokerListWorkspaces
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([oldWorkspace, betaWorkspace, gammaWorkspace]);
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    const rePrompt = state.selectPrompts.find(
+      (prompt) => prompt.message === 'Which workspace should the agent live in?',
+    );
+    expect(rePrompt?.options.map((option) => option.label)).toEqual([
+      'BetaCo',
+      'GammaCo',
+      'Connect a different workspace',
+      'Set up manually instead',
+    ]);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T1BETA456',
+      name: 'Trusty',
+      requested_by: 'U1OWNER34',
+    });
   });
 });
 
@@ -335,7 +529,11 @@ describe('a credential the Slack service refuses', () => {
       ['bash', ['setup/registry-login.sh', '--require-verified', '--force']],
     ]);
     expect(state.brokerListWorkspaces.mock.calls).toEqual([['nct-stale'], ['nct-fresh']]);
-    expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', { team_id: 'T0TEAM123', name: 'Trusty', requested_by: 'U0OWNER12' });
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+      requested_by: 'U0OWNER12',
+    });
     expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test' });
     expect(state.notes.at(-1)?.message).toContain('would not accept the saved credentials');
   });
