@@ -175,6 +175,7 @@ describe('unknown-sender request_approval flow', () => {
     const payload = JSON.parse(content as string);
     expect(payload.type).toBe('ask_question');
     expect(payload.questionId).toMatch(/^nsa-/);
+    expect(payload.question).toContain('reach anything it can reach');
 
     const { getDb } = await import('../../db/connection.js');
     const rows = await getDb().all('SELECT * FROM pending_sender_approvals');
