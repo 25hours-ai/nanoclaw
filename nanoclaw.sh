@@ -48,7 +48,7 @@ for arg in "$@"; do
     fi
     echo "Usage: bash nanoclaw.sh [options]"
     echo ""
-    echo "  --template-path <ref>  Create the first agent from templates/<ref>"
+    echo "  --template-path <ref>  Create or update an agent from templates/<ref>"
     echo "  --uninstall            Uninstall this NanoClaw copy"
     echo "  --help, -h             Show this help without installing dependencies"
     exit 0
