@@ -187,6 +187,7 @@ describe('unknown-channel registration flow', () => {
     expect(payload.type).toBe('ask_question');
     // Card tells the approver the resolved engage rule.
     expect(payload.question).toContain('will respond to @-mentions in this group');
+    expect(payload.question).toContain('reach anything it can reach');
     // Single-agent card offers a direct "Connect to <name>" button.
     const connectOption = payload.options.find((o: { value: string }) => o.value.startsWith('connect:'));
     expect(connectOption).toBeDefined();
@@ -561,8 +562,10 @@ describe('unknown-channel registration flow', () => {
     }
 
     const followupPayload = JSON.parse(deliverMock.mock.calls[1][4] as string) as {
+      question: string;
       options: Array<{ label: string; value: string }>;
     };
+    expect(followupPayload.question).toContain('reach anything it can reach');
     expect(followupPayload.options.map((option) => option.value)).toContain('connect:ag-1');
     expect(followupPayload.options.map((option) => option.value)).not.toContain('connect:ag-2');
 

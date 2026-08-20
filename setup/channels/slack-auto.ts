@@ -440,7 +440,27 @@ async function provisionViaBroker(
     if (workspaces.length === 0) return undefined;
   }
 
-  const workspace = await pickWorkspace(workspaces);
+  let workspace: BrokerWorkspace | undefined;
+  while (!workspace) {
+    const choice = await pickWorkspace(workspaces);
+    if (choice === 'manual') {
+      setupLog.userInput('slack_broker_workspace', 'manual');
+      p.log.info('Okay — walking through manual app creation instead.');
+      return undefined;
+    }
+    if (choice === 'connect') {
+      setupLog.userInput('slack_broker_workspace', 'connect');
+      const connected = await connectWorkspace(core, token, workspaces);
+      if (connected.length === 0) return undefined;
+      // Slack already asked the operator which workspace to connect. Use the
+      // single confirmed choice directly; only re-prompt if several changed.
+      if (connected.length === 1) workspace = connected[0];
+      else workspaces = connected;
+      continue;
+    }
+    workspace = choice;
+  }
+  setupLog.userInput('slack_broker_workspace', workspace.team_id);
   const s2 = p.spinner();
   start = Date.now();
   s2.start(`Creating ${name} in ${workspace.team_name}… (~30s — generating its avatar first)`);
@@ -512,7 +532,16 @@ function finishProvisioned(
   return { connection: 'provisioned', app_token: app.appToken };
 }
 
-async function connectWorkspace(core: ProvisioningCore, installToken: string): Promise<BrokerWorkspace[]> {
+/**
+ * The prior workspace snapshot makes OAuth waitable: a new team id or a
+ * changed `connected_at` proves the callback completed, while the unchanged
+ * list present before the browser opened does not.
+ */
+async function connectWorkspace(
+  core: ProvisioningCore,
+  installToken: string,
+  alreadyKnownWorkspaces: readonly BrokerWorkspace[] = [],
+): Promise<BrokerWorkspace[]> {
   let url: string;
   try {
     ({ url } = await core.brokerOauthUrl(installToken));
@@ -537,6 +566,9 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
 
   const s = p.spinner();
   const start = Date.now();
+  const knownConnections = new Map(
+    alreadyKnownWorkspaces.map((workspace) => [workspace.team_id, workspace.connected_at]),
+  );
   s.start('Waiting for Slack to confirm the connection…');
   const deadline = start + OAUTH_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -555,14 +587,19 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
       }
       continue;
     }
-    if (found.length > 0) {
+    const confirmed = found.filter(
+      (workspace) =>
+        !knownConnections.has(workspace.team_id) ||
+        (workspace.connected_at !== undefined && workspace.connected_at !== knownConnections.get(workspace.team_id)),
+    );
+    if (confirmed.length > 0) {
       const elapsedS = Math.round((Date.now() - start) / 1000);
-      s.stop(`Connected to ${found[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
+      s.stop(`Connected to ${confirmed[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
       setupLog.step('slack-broker-oauth', 'success', Date.now() - start, {
-        TEAM_ID: found[0].team_id,
-        TEAM_NAME: found[0].team_name,
+        TEAM_ID: confirmed[0].team_id,
+        TEAM_NAME: confirmed[0].team_name,
       });
-      return found;
+      return confirmed;
     }
   }
   s.stop("Slack didn't confirm the connection in time.", 1);
@@ -571,21 +608,29 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
   return [];
 }
 
-async function pickWorkspace(workspaces: BrokerWorkspace[]): Promise<BrokerWorkspace> {
-  if (workspaces.length === 1) {
-    setupLog.userInput('slack_broker_workspace', workspaces[0].team_id);
-    return workspaces[0];
-  }
-  const choice = ensureAnswer(
-    await brightSelect<BrokerWorkspace>({
-      message: 'Which workspace should the agent live in?',
-      options: workspaces.map((w) => ({
-        value: w,
-        label: w.team_name,
-        hint: w.connected_as ? `connected as ${w.connected_as}` : w.team_id,
-      })),
+type WorkspaceChoice = BrokerWorkspace | 'connect' | 'manual';
+
+async function pickWorkspace(workspaces: BrokerWorkspace[]): Promise<WorkspaceChoice> {
+  return ensureAnswer(
+    await brightSelect<WorkspaceChoice>({
+      message: workspaces.length === 1 ? 'Use this Slack workspace?' : 'Which workspace should the agent live in?',
+      options: [
+        ...workspaces.map((workspace) => ({
+          value: workspace,
+          label: workspaces.length === 1 ? `Use ${workspace.team_name}` : workspace.team_name,
+          hint: workspace.connected_as ? `connected as ${workspace.connected_as}` : workspace.team_id,
+        })),
+        {
+          value: 'connect',
+          label: 'Connect a different workspace',
+          hint: 'open Slack to connect another workspace',
+        },
+        {
+          value: 'manual',
+          label: 'Set up manually instead',
+          hint: 'walk through api.slack.com/apps by hand',
+        },
+      ],
     }),
   );
-  setupLog.userInput('slack_broker_workspace', choice.team_id);
-  return choice;
 }
