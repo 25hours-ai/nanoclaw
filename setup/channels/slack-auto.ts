@@ -269,28 +269,6 @@ export async function maybeAutoProvisionSlack(
 async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean } = {}): Promise<string | undefined> {
   const savedAccount = readRegistryAccount();
   const savedService = displayServiceOrigin(savedAccount?.api);
-  let force = opts.retry === true;
-  if (savedAccount && !opts.retry) {
-    const accountChoice = ensureAnswer(
-      await brightSelect<'saved' | 'different'>({
-        message: `Found saved NanoClaw credentials for ${savedService ?? 'an unknown service'}.`,
-        options: [
-          {
-            value: 'saved',
-            label: 'Use this account',
-            hint: 'validate the saved sign-in without opening a browser',
-          },
-          {
-            value: 'different',
-            label: 'Sign in with a different account',
-            hint: 'opens your browser and replaces the saved sign-in',
-          },
-        ],
-      }),
-    );
-    setupLog.userInput('slack_broker_account', accountChoice);
-    force = accountChoice === 'different';
-  }
   p.note(
     wrapForGutter(
       opts.retry
@@ -299,21 +277,17 @@ async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean }
             'Signing in again — finish it in your browser, then come',
             'back here.',
           ].join('\n')
-        : savedAccount && force
-          ? ['Signing in with a different NanoClaw account.', 'Finish it in your browser, then come back here.'].join(
-              '\n',
-            )
-          : savedAccount
-            ? [
-                'Found saved NanoClaw credentials.',
-                `Service: ${savedService ?? 'unknown'}`,
-                'Checking whether they are valid for this setup…',
-              ].join('\n')
-            : [
-                'Creating the app for you runs through your NanoClaw account.',
-                'A code appears below — finish the sign-in in your browser,',
-                'then come back here.',
-              ].join('\n'),
+        : savedAccount
+          ? [
+              'Found saved NanoClaw credentials.',
+              `Service: ${savedService ?? 'unknown'}`,
+              'Checking whether they are valid for this setup…',
+            ].join('\n')
+          : [
+              'Creating the app for you runs through your NanoClaw account.',
+              'A code appears below — finish the sign-in in your browser,',
+              'then come back here.',
+            ].join('\n'),
       6,
     ),
     'NanoClaw sign-in',
@@ -321,7 +295,7 @@ async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean }
   const wasDecided = imageSourceDecided();
   const priorSource = wasDecided ? readImageSource() : undefined;
   const start = Date.now();
-  const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(force ? ['--force'] : [])];
+  const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(opts.retry ? ['--force'] : [])];
   const code = await runInheritScript('bash', args);
   if (priorSource === 'local') writeImageSource('local');
   else if (!wasDecided) clearImageSource();

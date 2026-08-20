@@ -253,10 +253,10 @@ describe('Slack managed-app sign-in', () => {
     };
   });
 
-  it('saved credential + Use this account validates without --force and shows only its service origin', async () => {
+  it('saved credential validates silently without --force and shows only its service origin', async () => {
     const root = track(rootWithModule());
     const core = fakeCore();
-    state.selectLabels.push('Create it for me', 'Use this account', 'Use NanoCo');
+    state.selectLabels.push('Create it for me', 'Use NanoCo');
     const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
 
     expect(state.runInheritScript).toHaveBeenCalledOnce();
@@ -264,7 +264,6 @@ describe('Slack managed-app sign-in', () => {
     // could not reach the account service to check, must not come back as a
     // success here — this flow is about to spend it.
     expect(state.runInheritScript).toHaveBeenCalledWith('bash', ['setup/registry-login.sh', '--require-verified']);
-    expect(state.userInput).toHaveBeenCalledWith('slack_broker_account', 'saved');
     expect(state.brokerListWorkspaces).toHaveBeenCalledWith('nct-saved');
     expect(result).toMatchObject({
       connection: 'provisioned',
@@ -285,26 +284,8 @@ describe('Slack managed-app sign-in', () => {
     ]);
     expect(state.notes[0].message).not.toContain('password');
     expect(state.notes[0].message).not.toContain('secret');
-    expect(state.selectPrompts[1].message).toBe(
-      'Found saved NanoClaw credentials for https://registry.sandbox.nanoclaw.dev.',
-    );
-    expect(state.selectPrompts[1].message).not.toContain('password');
-    expect(state.selectPrompts[1].message).not.toContain('secret');
-  });
-
-  it('saved credential + Sign in with a different account re-authenticates with --force', async () => {
-    const root = track(rootWithModule());
-    const core = fakeCore();
-    state.selectLabels.push('Create it for me', 'Sign in with a different account', 'Use NanoCo');
-
-    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
-
-    expect(state.runInheritScript).toHaveBeenCalledExactlyOnceWith('bash', [
-      'setup/registry-login.sh',
-      '--require-verified',
-      '--force',
-    ]);
-    expect(state.userInput).toHaveBeenCalledWith('slack_broker_account', 'different');
+    expect(state.selectPrompts).toHaveLength(2);
+    expect(state.selectPrompts[1].message).toBe('Use this Slack workspace?');
   });
 });
 
@@ -323,7 +304,7 @@ describe('Slack broker workspace choice', () => {
   it('single workspace + Use <name> provisions the confirmed team', async () => {
     const root = track(rootWithModule());
     const core = fakeCore();
-    state.selectLabels.push('Create it for me', 'Use this account', 'Use NanoCo');
+    state.selectLabels.push('Create it for me', 'Use NanoCo');
 
     await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
 
@@ -356,7 +337,7 @@ describe('Slack broker workspace choice', () => {
       status: 'active',
       connected_as: 'U1OWNER34',
     };
-    state.selectLabels.push('Create it for me', 'Use this account', 'Connect a different workspace');
+    state.selectLabels.push('Create it for me', 'Connect a different workspace');
     state.brokerListWorkspaces
       .mockResolvedValueOnce([oldWorkspace])
       .mockResolvedValueOnce([oldWorkspace])
@@ -377,7 +358,7 @@ describe('Slack broker workspace choice', () => {
   it('Set up manually instead returns to the manual path without provisioning', async () => {
     const root = track(rootWithModule());
     const core = fakeCore();
-    state.selectLabels.push('Create it for me', 'Use this account', 'Set up manually instead');
+    state.selectLabels.push('Create it for me', 'Set up manually instead');
 
     await expect(maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core })).resolves.toBeUndefined();
 
@@ -395,7 +376,7 @@ describe('Slack broker workspace choice', () => {
       status: 'active',
       connected_as: 'U1OWNER34',
     };
-    state.selectLabels.push('Create it for me', 'Use this account', 'Use NewCo');
+    state.selectLabels.push('Create it for me', 'Use NewCo');
     state.brokerListWorkspaces.mockResolvedValueOnce([]).mockResolvedValueOnce([newWorkspace]);
 
     await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
@@ -420,7 +401,7 @@ describe('Slack broker workspace choice', () => {
     const oldWorkspace = { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' };
     const betaWorkspace = { team_id: 'T1BETA456', team_name: 'BetaCo', status: 'active', connected_as: 'U1OWNER34' };
     const gammaWorkspace = { team_id: 'T2GAMMA78', team_name: 'GammaCo', status: 'active', connected_as: 'U2OWNER56' };
-    state.selectLabels.push('Create it for me', 'Use this account', 'Connect a different workspace', 'BetaCo');
+    state.selectLabels.push('Create it for me', 'Connect a different workspace', 'BetaCo');
     state.brokerListWorkspaces
       .mockResolvedValueOnce([oldWorkspace])
       .mockResolvedValueOnce([oldWorkspace, betaWorkspace, gammaWorkspace]);
@@ -516,12 +497,6 @@ describe('a credential the Slack service refuses', () => {
       ['bash', ['setup/registry-login.sh', '--require-verified']],
       ['bash', ['setup/registry-login.sh', '--require-verified', '--force']],
     ]);
-    // The retry knows the saved credential failed — it must re-authenticate
-    // without offering the saved/different choice a second time.
-    const accountPrompts = state.selectPrompts.filter((prompt) =>
-      prompt.message.startsWith('Found saved NanoClaw credentials'),
-    );
-    expect(accountPrompts).toHaveLength(1);
     expect(state.brokerListWorkspaces.mock.calls).toEqual([['nct-stale'], ['nct-fresh']]);
     expect(state.brokerProvision).toHaveBeenCalledWith('nct-fresh', {
       team_id: 'T0TEAM123',
