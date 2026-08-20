@@ -25,14 +25,18 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
-# ─── --slack-agents: opt-in flag → env passthrough ─────────────────────
+# ─── --[no-]slack-agents: env passthrough ──────────────────────────────
 # Consumed here rather than forwarded: setup:auto reads the env var
-# (NANOCLAW_SLACK_AGENTS=1, checked in setup/channels/slack-auto-register.ts).
-# Without the flag, nothing changes.
+# (NANOCLAW_SLACK_AGENTS, checked in setup/channels/slack-auto-register.ts).
+# The managed Slack experience is the default; --no-slack-agents opts out
+# (single plain bot, no provisioning offer). --slack-agents is accepted for
+# compatibility and is a no-op.
 _filtered_args=()
 for arg in "$@"; do
   if [ "$arg" = "--slack-agents" ]; then
     export NANOCLAW_SLACK_AGENTS=1
+  elif [ "$arg" = "--no-slack-agents" ]; then
+    export NANOCLAW_SLACK_AGENTS=0
   else
     _filtered_args+=("$arg")
   fi
@@ -49,6 +53,7 @@ for arg in "$@"; do
     echo "Usage: bash nanoclaw.sh [options]"
     echo ""
     echo "  --template-path <ref>  Create or update an agent from templates/<ref>"
+    echo "  --no-slack-agents      Slack connects as a single plain bot (no managed provisioning)"
     echo "  --uninstall            Uninstall this NanoClaw copy"
     echo "  --help, -h             Show this help without installing dependencies"
     exit 0

@@ -145,6 +145,13 @@ export function printHelp(stream: NodeJS.WritableStream = process.stdout): void 
     lines.push(`  ${flag}${e.help}`);
   }
   lines.push('');
+  // Consumed by nanoclaw.sh before this process starts, so it lives outside
+  // the registry — listed here so --help stays the one complete reference.
+  lines.push(
+    '  --no-slack-agents'.padEnd(Math.max(...CONFIG.map((e) => flagFor(e).length)) + 4) +
+      'Slack connects as a single plain bot (no managed provisioning)',
+  );
+  lines.push('');
   lines.push('Each flag also reads from its corresponding NANOCLAW_<KEY> env var.');
   lines.push('Run without flags for the default interactive flow.');
   stream.write(lines.join('\n') + '\n');

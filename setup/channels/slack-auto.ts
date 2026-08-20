@@ -20,8 +20,8 @@
  * payloads (git fetch + git show, remote resolution included). Setup runs
  * under tsx, so importing the fetched .ts file directly works.
  *
- * Loaded ONLY behind the NANOCLAW_SLACK_AGENTS opt-in: slack-auto-register.ts
- * dynamic-imports this module when the flag is set, so the default wizard
+ * Loaded through slack-auto-register.ts — the default Slack experience,
+ * with NANOCLAW_SLACK_AGENTS=0 as the opt-out — so a wizard run that skips
  * never evaluates this file or its strings.
  *
  * Returns undefined to mean "walk the manual path" — never throws for
@@ -236,13 +236,13 @@ export async function maybeAutoProvisionSlack(
           value: 'auto',
           label: 'Create it for me',
           hint: needsSignIn
-            ? 'sign in with your NanoClaw account, then app + install in one step'
-            : 'app + install in one step, no token pasting',
+            ? 'Add Agent to Slack — sign in with your NanoClaw account, then app + install in one step'
+            : 'Add Agent to Slack — app + install in one step, no token pasting',
         },
         {
           value: 'manual',
-          label: 'I will supply my own bot token',
-          hint: 'advanced — walk through api.slack.com/apps by hand',
+          label: 'I will create it myself',
+          hint: 'walk through api.slack.com/apps by hand',
         },
       ],
     }),

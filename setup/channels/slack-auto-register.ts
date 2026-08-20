@@ -1,19 +1,19 @@
 /**
- * Opt-in registration for automatic Slack app provisioning.
+ * Registration for automatic Slack app provisioning — the default Slack
+ * experience.
  *
- * This shim is the only piece of the feature on the default wizard path.
- * It checks the NANOCLAW_SLACK_AGENTS env flag ("1" enables it — set the
- * var directly or pass `--slack-agents` to nanoclaw.sh) and returns without
- * registering anything when the flag is off, leaving the wizard identical
- * to a build without the feature. The flow itself (slack-auto.ts plus the
- * provisioning core it bootstraps from the channels branch — the module's
- * permanent home is the add-slack channel payload, at
+ * This shim is the only piece of the feature on the wizard's boot path. The
+ * managed flow registers by default; setting NANOCLAW_SLACK_AGENTS=0 (or
+ * passing `--no-slack-agents` to nanoclaw.sh) opts out, for installs that
+ * want a single plain bot with no provisioning offer — the wizard then runs
+ * exactly as a build without the feature. The flow itself (slack-auto.ts
+ * plus the provisioning core it bootstraps from the channels branch — the
+ * module's permanent home is the add-slack channel payload, at
  * src/provisioning/slack-app.ts on an installed tree) loads via dynamic
- * import only after the flag check passes AND the wizard actually invokes
- * the Slack pre-step. No fetch, no import, nothing runs while the flag is
- * off.
+ * import only when the wizard actually invokes the Slack pre-step. No
+ * fetch, no import, nothing runs unless Slack is chosen.
  *
- * The flag also declares the Slack agents companion skills. `/add-slack`
+ * Registration also declares the Slack agents companion skills. `/add-slack`
  * alone is the base experience (one bot, DM/channel chat); the agents
  * feature — child bots provisioned from `create_agent`, shared a2a rooms,
  * canvases, DM onboarding — ships in the `slack-a2a-rooms` and
@@ -44,7 +44,7 @@ export function registerSlackAutoProvision(
   registerCompanions: (channel: string, skills: readonly string[]) => void,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (env[SLACK_AGENTS_FLAG] !== '1') return;
+  if (env[SLACK_AGENTS_FLAG] === '0') return;
   register('slack', async (agentName) => {
     const { maybeAutoProvisionSlack } = await import('./slack-auto.js');
     return maybeAutoProvisionSlack(agentName);
