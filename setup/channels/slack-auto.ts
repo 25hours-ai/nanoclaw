@@ -431,17 +431,12 @@ async function provisionViaBroker(
     }
     if (choice === 'connect') {
       setupLog.userInput('slack_broker_workspace', 'connect');
-      const knownTeamIds = workspaces.map((candidate) => candidate.team_id);
-      const refreshed = await connectWorkspace(core, token, knownTeamIds);
-      if (refreshed.length === 0) return undefined;
-      const known = new Set(knownTeamIds);
-      // "Connect a different workspace" declined everything on offer — the
-      // known teams stay out of the next round. And the operator connected the
-      // new one to use it: asking again would be the recognized-workspace
-      // auto-pick in reverse, so re-prompt only when more than one arrived.
-      const newWorkspaces = refreshed.filter((candidate) => !known.has(candidate.team_id));
-      if (newWorkspaces.length === 1) workspace = newWorkspaces[0];
-      else workspaces = newWorkspaces;
+      const connected = await connectWorkspace(core, token, workspaces);
+      if (connected.length === 0) return undefined;
+      // Slack already asked the operator which workspace to connect. Use the
+      // single confirmed choice directly; only re-prompt if several changed.
+      if (connected.length === 1) workspace = connected[0];
+      else workspaces = connected;
       continue;
     }
     workspace = choice;
@@ -519,15 +514,14 @@ function finishProvisioned(
 }
 
 /**
- * `alreadyKnownTeamIds` makes "connect a different workspace" waitable: the
- * poll succeeds only on a team that wasn't connected before it started —
- * a bare non-empty check would return instantly with the workspace the
- * operator just declined.
+ * The prior workspace snapshot makes OAuth waitable: a new team id or a
+ * changed `connected_at` proves the callback completed, while the unchanged
+ * list present before the browser opened does not.
  */
 async function connectWorkspace(
   core: ProvisioningCore,
   installToken: string,
-  alreadyKnownTeamIds: readonly string[] = [],
+  alreadyKnownWorkspaces: readonly BrokerWorkspace[] = [],
 ): Promise<BrokerWorkspace[]> {
   let url: string;
   try {
@@ -553,7 +547,9 @@ async function connectWorkspace(
 
   const s = p.spinner();
   const start = Date.now();
-  const knownTeamIds = new Set(alreadyKnownTeamIds);
+  const knownConnections = new Map(
+    alreadyKnownWorkspaces.map((workspace) => [workspace.team_id, workspace.connected_at]),
+  );
   s.start('Waiting for Slack to confirm the connection…');
   const deadline = start + OAUTH_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -572,15 +568,19 @@ async function connectWorkspace(
       }
       continue;
     }
-    const newlyConnected = found.filter((workspace) => !knownTeamIds.has(workspace.team_id));
-    if (newlyConnected.length > 0) {
+    const confirmed = found.filter(
+      (workspace) =>
+        !knownConnections.has(workspace.team_id) ||
+        (workspace.connected_at !== undefined && workspace.connected_at !== knownConnections.get(workspace.team_id)),
+    );
+    if (confirmed.length > 0) {
       const elapsedS = Math.round((Date.now() - start) / 1000);
-      s.stop(`Connected to ${newlyConnected[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
+      s.stop(`Connected to ${confirmed[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
       setupLog.step('slack-broker-oauth', 'success', Date.now() - start, {
-        TEAM_ID: newlyConnected[0].team_id,
-        TEAM_NAME: newlyConnected[0].team_name,
+        TEAM_ID: confirmed[0].team_id,
+        TEAM_NAME: confirmed[0].team_name,
       });
-      return found;
+      return confirmed;
     }
   }
   s.stop("Slack didn't confirm the connection in time.", 1);

@@ -355,6 +355,37 @@ describe('Slack broker workspace choice', () => {
     expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'T1TEAM456');
   });
 
+  it('reconnecting the same workspace completes when connected_at changes', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    const oldWorkspace = {
+      team_id: 'T0TEAM123',
+      team_name: 'NanoCo',
+      status: 'active',
+      connected_as: 'U0OWNER12',
+      connected_at: '2026-08-20T13:40:00.000Z',
+    };
+    const reconnectedWorkspace = {
+      ...oldWorkspace,
+      connected_at: '2026-08-20T13:47:41.414Z',
+    };
+    state.selectLabels.push('Create it for me', 'Connect a different workspace');
+    state.brokerListWorkspaces
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([oldWorkspace])
+      .mockResolvedValueOnce([reconnectedWorkspace]);
+
+    await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.brokerListWorkspaces).toHaveBeenCalledTimes(3);
+    expect(state.brokerProvision).toHaveBeenCalledWith('nct-saved', {
+      team_id: 'T0TEAM123',
+      name: 'Trusty',
+      requested_by: 'U0OWNER12',
+    });
+    expect(state.userInput).toHaveBeenCalledWith('slack_broker_workspace', 'T0TEAM123');
+  });
+
   it('Set up manually instead returns to the manual path without provisioning', async () => {
     const root = track(rootWithModule());
     const core = fakeCore();
