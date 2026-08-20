@@ -18,9 +18,16 @@
 
 ---
 
-> ### 🆕 Add Agent to Slack — one-click Slack agents
->
-> NanoClaw now puts agents on Slack in one step: run `bash nanoclaw.sh`, pick Slack, and choose **Create it for me** — the app, its avatar, and the workspace install happen automatically through your NanoClaw account. No tokens to paste, no api.slack.com detour. Ask your agent for teammates and each one arrives as its own Slack bot, with shared rooms, canvases, and DMs of its own.
+<div align="center">
+
+### A whole new way to run agents in Slack <img src="assets/slack-icon.svg" alt="" width="22" valign="middle">
+
+One-click install — the app, its avatar, and the workspace install happen automatically.
+Ask for teammates and each arrives as its own Slack bot, with shared rooms, canvases, and DMs.
+
+[![Try it out](https://img.shields.io/badge/Try%20it%20out%20%E2%86%92-4A154B?style=for-the-badge)](https://nanoclaw.dev/slack)
+
+</div>
 
 ## Why I Built NanoClaw
 
