@@ -269,6 +269,28 @@ export async function maybeAutoProvisionSlack(
 async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean } = {}): Promise<string | undefined> {
   const savedAccount = readRegistryAccount();
   const savedService = displayServiceOrigin(savedAccount?.api);
+  let force = opts.retry === true;
+  if (savedAccount && !opts.retry) {
+    const accountChoice = ensureAnswer(
+      await brightSelect<'saved' | 'different'>({
+        message: `Found saved NanoClaw credentials for ${savedService ?? 'an unknown service'}.`,
+        options: [
+          {
+            value: 'saved',
+            label: 'Use this account',
+            hint: 'validate the saved sign-in without opening a browser',
+          },
+          {
+            value: 'different',
+            label: 'Sign in with a different account',
+            hint: 'opens your browser and replaces the saved sign-in',
+          },
+        ],
+      }),
+    );
+    setupLog.userInput('slack_broker_account', accountChoice);
+    force = accountChoice === 'different';
+  }
   p.note(
     wrapForGutter(
       opts.retry
@@ -277,17 +299,21 @@ async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean }
             'Signing in again — finish it in your browser, then come',
             'back here.',
           ].join('\n')
-        : savedAccount
-          ? [
-              'Found saved NanoClaw credentials.',
-              `Service: ${savedService ?? 'unknown'}`,
-              'Checking whether they are valid for this setup…',
-            ].join('\n')
-          : [
-              'Creating the app for you runs through your NanoClaw account.',
-              'A code appears below — finish the sign-in in your browser,',
-              'then come back here.',
-            ].join('\n'),
+        : savedAccount && force
+          ? ['Signing in with a different NanoClaw account.', 'Finish it in your browser, then come back here.'].join(
+              '\n',
+            )
+          : savedAccount
+            ? [
+                'Found saved NanoClaw credentials.',
+                `Service: ${savedService ?? 'unknown'}`,
+                'Checking whether they are valid for this setup…',
+              ].join('\n')
+            : [
+                'Creating the app for you runs through your NanoClaw account.',
+                'A code appears below — finish the sign-in in your browser,',
+                'then come back here.',
+              ].join('\n'),
       6,
     ),
     'NanoClaw sign-in',
@@ -295,7 +321,7 @@ async function signInForBroker(core: ProvisioningCore, opts: { retry?: boolean }
   const wasDecided = imageSourceDecided();
   const priorSource = wasDecided ? readImageSource() : undefined;
   const start = Date.now();
-  const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(opts.retry ? ['--force'] : [])];
+  const args = [REGISTRY_LOGIN_SCRIPT, '--require-verified', ...(force ? ['--force'] : [])];
   const code = await runInheritScript('bash', args);
   if (priorSource === 'local') writeImageSource('local');
   else if (!wasDecided) clearImageSource();
@@ -421,7 +447,32 @@ async function provisionViaBroker(
     if (workspaces.length === 0) return undefined;
   }
 
-  const workspace = await pickWorkspace(workspaces);
+  let workspace: BrokerWorkspace | undefined;
+  while (!workspace) {
+    const choice = await pickWorkspace(workspaces);
+    if (choice === 'manual') {
+      setupLog.userInput('slack_broker_workspace', 'manual');
+      p.log.info('Okay — walking through manual app creation instead.');
+      return undefined;
+    }
+    if (choice === 'connect') {
+      setupLog.userInput('slack_broker_workspace', 'connect');
+      const knownTeamIds = workspaces.map((candidate) => candidate.team_id);
+      const refreshed = await connectWorkspace(core, token, knownTeamIds);
+      if (refreshed.length === 0) return undefined;
+      const known = new Set(knownTeamIds);
+      // "Connect a different workspace" declined everything on offer — the
+      // known teams stay out of the next round. And the operator connected the
+      // new one to use it: asking again would be the recognized-workspace
+      // auto-pick in reverse, so re-prompt only when more than one arrived.
+      const newWorkspaces = refreshed.filter((candidate) => !known.has(candidate.team_id));
+      if (newWorkspaces.length === 1) workspace = newWorkspaces[0];
+      else workspaces = newWorkspaces;
+      continue;
+    }
+    workspace = choice;
+  }
+  setupLog.userInput('slack_broker_workspace', workspace.team_id);
   const s2 = p.spinner();
   start = Date.now();
   s2.start(`Creating ${name} in ${workspace.team_name}… (~30s — generating its avatar first)`);
@@ -493,7 +544,17 @@ function finishProvisioned(
   return { connection: 'provisioned', app_token: app.appToken };
 }
 
-async function connectWorkspace(core: ProvisioningCore, installToken: string): Promise<BrokerWorkspace[]> {
+/**
+ * `alreadyKnownTeamIds` makes "connect a different workspace" waitable: the
+ * poll succeeds only on a team that wasn't connected before it started —
+ * a bare non-empty check would return instantly with the workspace the
+ * operator just declined.
+ */
+async function connectWorkspace(
+  core: ProvisioningCore,
+  installToken: string,
+  alreadyKnownTeamIds: readonly string[] = [],
+): Promise<BrokerWorkspace[]> {
   let url: string;
   try {
     ({ url } = await core.brokerOauthUrl(installToken));
@@ -518,6 +579,7 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
 
   const s = p.spinner();
   const start = Date.now();
+  const knownTeamIds = new Set(alreadyKnownTeamIds);
   s.start('Waiting for Slack to confirm the connection…');
   const deadline = start + OAUTH_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -536,12 +598,13 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
       }
       continue;
     }
-    if (found.length > 0) {
+    const newlyConnected = found.filter((workspace) => !knownTeamIds.has(workspace.team_id));
+    if (newlyConnected.length > 0) {
       const elapsedS = Math.round((Date.now() - start) / 1000);
-      s.stop(`Connected to ${found[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
+      s.stop(`Connected to ${newlyConnected[0].team_name}. ${k.dim(`(${elapsedS}s)`)}`);
       setupLog.step('slack-broker-oauth', 'success', Date.now() - start, {
-        TEAM_ID: found[0].team_id,
-        TEAM_NAME: found[0].team_name,
+        TEAM_ID: newlyConnected[0].team_id,
+        TEAM_NAME: newlyConnected[0].team_name,
       });
       return found;
     }
@@ -552,21 +615,29 @@ async function connectWorkspace(core: ProvisioningCore, installToken: string): P
   return [];
 }
 
-async function pickWorkspace(workspaces: BrokerWorkspace[]): Promise<BrokerWorkspace> {
-  if (workspaces.length === 1) {
-    setupLog.userInput('slack_broker_workspace', workspaces[0].team_id);
-    return workspaces[0];
-  }
-  const choice = ensureAnswer(
-    await brightSelect<BrokerWorkspace>({
-      message: 'Which workspace should the agent live in?',
-      options: workspaces.map((w) => ({
-        value: w,
-        label: w.team_name,
-        hint: w.connected_as ? `connected as ${w.connected_as}` : w.team_id,
-      })),
+type WorkspaceChoice = BrokerWorkspace | 'connect' | 'manual';
+
+async function pickWorkspace(workspaces: BrokerWorkspace[]): Promise<WorkspaceChoice> {
+  return ensureAnswer(
+    await brightSelect<WorkspaceChoice>({
+      message: workspaces.length === 1 ? 'Use this Slack workspace?' : 'Which workspace should the agent live in?',
+      options: [
+        ...workspaces.map((workspace) => ({
+          value: workspace,
+          label: workspaces.length === 1 ? `Use ${workspace.team_name}` : workspace.team_name,
+          hint: workspace.connected_as ? `connected as ${workspace.connected_as}` : workspace.team_id,
+        })),
+        {
+          value: 'connect',
+          label: 'Connect a different workspace',
+          hint: 'open Slack to connect another workspace',
+        },
+        {
+          value: 'manual',
+          label: 'Set up manually instead',
+          hint: 'walk through api.slack.com/apps by hand',
+        },
+      ],
     }),
   );
-  setupLog.userInput('slack_broker_workspace', choice.team_id);
-  return choice;
 }
