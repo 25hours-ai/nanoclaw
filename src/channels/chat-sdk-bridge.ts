@@ -205,6 +205,105 @@ export function normalizeDmThreadId(threadId: string, messageId: string): string
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReplyContextExtractor = (raw: Record<string, any>) => ReplyContext | null;
 
+// ---------------------------------------------------------------------------
+// Membership hook
+// ---------------------------------------------------------------------------
+
+/**
+ * A member joined (or left) a channel/group conversation one of our bridge
+ * instances is in. Forwarded from the Chat SDK's member_joined_channel
+ * dispatch; `left` is reserved for member_left_channel, which the installed
+ * chat core (4.29.0) does NOT dispatch — see the TODO at the
+ * onMemberJoinedChannel registration in setup().
+ */
+export interface MembershipEvent {
+  /** Adapter-instance key of the bridge that saw the event (defaults to the
+   *  platform name for default instances). */
+  instance: string;
+  /** Semantic platform key (`adapter.name`) — the key membership handlers
+   *  are registered under. */
+  channelType: string;
+  channelId: string;
+  userId: string;
+  inviterId?: string;
+  left?: boolean;
+}
+
+export type MembershipHandler = (event: MembershipEvent) => void | Promise<void>;
+
+const membershipHandlers = new Map<string, MembershipHandler>();
+
+/**
+ * Register THE membership handler for a channel type (single registration —
+ * one channel-side module owns it; a second registration for the same
+ * channel type overwrites with a warning, mirroring the router's hook
+ * discipline). The bridge invokes it fire-and-forget for every membership
+ * event on every bridge instance of that channel type; errors are logged,
+ * never thrown into SDK dispatch. With no handler registered the bridge
+ * behaves exactly as before.
+ */
+export function setMembershipHandler(channelType: string, fn: MembershipHandler): void {
+  if (membershipHandlers.has(channelType)) {
+    log.warn('Membership handler overwritten', { channelType });
+  }
+  membershipHandlers.set(channelType, fn);
+}
+
+function dispatchMembership(event: MembershipEvent): void {
+  const handler = membershipHandlers.get(event.channelType);
+  if (!handler) return;
+  try {
+    Promise.resolve(handler(event)).catch((err) =>
+      log.error('Membership handler failed', {
+        channelType: event.channelType,
+        channelId: event.channelId,
+        userId: event.userId,
+        err,
+      }),
+    );
+  } catch (err) {
+    log.error('Membership handler threw', {
+      channelType: event.channelType,
+      channelId: event.channelId,
+      userId: event.userId,
+      err,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inbound policy registration
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap of the host's `ChannelSetup`, applied at bridge setup time. Every
+ * inbound dispatch path (onSubscribedMessage / onNewMention / onDirectMessage
+ * / onNewMessage) funnels through the stored setup's `onInbound`, so a policy
+ * that wraps `onInbound` intercepts them all at a single point — e.g. to
+ * drop, re-attribute, or rate-limit bot-authored messages before routing.
+ *
+ * `instanceKey` is the bridge's registry key (`config.instance ??
+ * adapter.name`): the wrap runs once per bridge instance, so policy state
+ * captured in the returned closure is naturally per-instance (= per bot
+ * identity when several bridges share one platform).
+ */
+export type BridgeInboundPolicy = (setup: ChannelSetup, instanceKey: string) => ChannelSetup | Promise<ChannelSetup>;
+
+const bridgeInboundPolicies = new Map<string, BridgeInboundPolicy>();
+
+/**
+ * Register THE inbound policy for a channel type (single registration — the
+ * owning module registers on barrel import; a second registration overwrites
+ * with a warning, mirroring the router's hook discipline). Bridges whose
+ * channel type has no registered policy are unaffected.
+ */
+export function registerBridgeInboundPolicy(channelType: string, wrap: BridgeInboundPolicy): void {
+  if (bridgeInboundPolicies.has(channelType)) {
+    log.warn('Bridge inbound policy overwritten', { channelType });
+  }
+  bridgeInboundPolicies.set(channelType, wrap);
+}
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   /**
@@ -417,7 +516,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
     defaults: config.defaults,
 
     async setup(hostConfig: ChannelSetup) {
-      setupConfig = hostConfig;
+      // Apply the registered inbound policy (if any) for this channel type.
+      // Wrapping here — the single point every dispatch path reads back
+      // through — means one policy covers onSubscribedMessage, onNewMention,
+      // onDirectMessage and onNewMessage alike.
+      const inboundPolicy = bridgeInboundPolicies.get(adapter.name);
+      setupConfig = inboundPolicy ? await inboundPolicy(hostConfig, instanceKey) : hostConfig;
 
       // State namespace: ONLY for a named non-default instance. A skill
       // that explicitly names the primary instance after the platform
@@ -514,6 +618,24 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       });
       chat.onAssistantContextChanged(rememberAppContext);
 
+      // Membership events: forwarded to the handler registered for this
+      // channel type (setMembershipHandler); no-op when none is registered.
+      // The chat core dispatches only member_joined_channel;
+      // member_left_channel arrives at the adapter but has no SDK handler
+      // in 4.29.0.
+      // TODO(member-left): when the chat core grows an onMemberLeftChannel
+      // dispatch, register it here and forward with { left: true } — the
+      // MembershipEvent type and dispatchMembership already carry it.
+      chat.onMemberJoinedChannel((event) => {
+        dispatchMembership({
+          instance: instanceKey,
+          channelType: adapter.name,
+          channelId: event.channelId,
+          userId: event.userId,
+          inviterId: event.inviterId,
+        });
+      });
+
       // Handle button clicks (ask_user_question)
       chat.onAction(async (event) => {
         if (!event.actionId.startsWith('ncq:')) return;
@@ -524,7 +646,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         const userId = event.user?.userId || '';
 
         // Resolve render metadata BEFORE dispatching onAction (which deletes the row).
-        const render = resolveQuestionRender(questionId);
+        const render = await resolveQuestionRender(questionId);
         // New format: button id/value is an integer index into options (kept
         // short to fit Telegram's 64-byte callback_data cap). Old format:
         // the full value is embedded in actionId/value directly.
@@ -578,7 +700,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           const startedAt = Date.now();
           // Capture the long-running listener promise via waitUntil
           let listenerPromise: Promise<unknown> | undefined;
-          gatewayAdapter.startGatewayListener!(
+          void gatewayAdapter.startGatewayListener!(
             {
               waitUntil: (p: Promise<unknown>) => {
                 listenerPromise = p;
@@ -613,7 +735,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
               }
               setTimeout(startGateway, delayMs);
             };
-            listenerPromise.then(() => reschedule()).catch(reschedule);
+            void listenerPromise.then(() => reschedule()).catch(reschedule);
           });
         };
         startGateway();
@@ -910,7 +1032,7 @@ async function handleForwardedEvent(
       const originalEmbeds =
         ((interaction.message as Record<string, unknown>)?.embeds as Array<Record<string, unknown>>) || [];
       const originalDescription = (originalEmbeds[0]?.description as string) || '';
-      const render = questionId ? resolveQuestionRender(questionId) : undefined;
+      const render = questionId ? await resolveQuestionRender(questionId) : undefined;
       // Discord custom_id mirrors the new index-based encoding (see Button
       // construction). Decode back to the real option value for downstream.
       const selectedOption = resolveSelectedOption(render, tail, tail);
