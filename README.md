@@ -20,10 +20,10 @@
 
 <div align="center">
 
-### A whole new way to run agents in Slack <img src="assets/slack-icon.svg" alt="" width="22" valign="middle">
+### Agents in Slack: one app per agent <img src="assets/slack-icon.svg" alt="" width="22" valign="middle">
 
-One-click install — the app, its avatar, and the workspace install happen automatically.
-Ask for teammates and each arrives as its own Slack bot, with shared rooms, canvases, and DMs.
+Setup provisions each agent its own Slack app — manifest, avatar, and workspace install, no tokens to paste.
+Spawn teammates from chat: every one gets its own bot identity, container, and memory, with shared rooms and canvases.
 
 [![Try it out](https://img.shields.io/badge/Try%20it%20out%20%E2%86%92-4A154B?style=for-the-badge)](https://nanoclaw.dev/slack)
 
