@@ -14,8 +14,8 @@ directives); all idempotent.
 This is the base Slack experience: one bot, DM and channel chat. The Slack
 **agents** feature — child bots provisioned from `create_agent`, shared rooms,
 canvases, DM onboarding — ships separately in `/slack-a2a-rooms` +
-`/slack-agent-flow`; the setup wizard applies them automatically when run with
-`--slack-agents`, and they can be applied on top of this install at any time.
+`/slack-agent-flow`; the setup wizard applies them automatically, and they can be applied on top
+of this install at any time.
 
 ## Apply
 
@@ -182,8 +182,7 @@ bash setup/lib/restart.sh
 Mid-`/setup`: return to the setup flow. Otherwise wire the channel with `/init-first-agent`
 (or `/manage-channels`). For the Slack agents feature (child bots from
 `create_agent`, shared rooms, canvases), apply `/slack-a2a-rooms` then
-`/slack-agent-flow` — the setup wizard does both automatically when run with
-`--slack-agents`.
+`/slack-agent-flow` — the setup wizard does both automatically by default.
 
 ## Channel Info
 
@@ -201,4 +200,4 @@ Mid-`/setup`: return to the setup flow. Otherwise wire the channel with `/init-f
 - **`auth.test` fails, or `conversations.open` returns no channel.** A failing `auth.test` means the bot token is wrong or the app was never installed to the workspace. An empty `conversations.open` means the `im:write` scope is missing — add it and **reinstall the app**; scope changes only take effect after reinstall, which also mints a new `xoxb-` token to store.
 - **The greeting arrives but your replies vanish.** Sending works with just the bot token; *receiving* needs the event path. Socket Mode: the toggle on, `SLACK_APP_TOKEN` set with `connections:write`, and the bot events (`message.im`, `message.channels`, `message.groups`, `app_mention`) subscribed. Webhook: the Request URL must have passed Slack's challenge and the same events subscribed. Either way, App Home's Messages Tab must be enabled or Slack refuses DMs to the app.
 - **Adapter registered but Slack never connects.** Run `pnpm exec vitest run src/channels/slack-registration.test.ts` — red means the barrel import or the `@chat-adapter/slack` install drifted, so re-run the Apply steps. If green, restart the service (`bash setup/lib/restart.sh`) and check `logs/nanoclaw.error.log`.
-- **Rooms, canvases, or DM onboarding are missing.** Those are the agents feature, not this adapter install — they arrive with `/slack-a2a-rooms` + `/slack-agent-flow` (setup applies both when run with `--slack-agents`). If those skills were applied, check `src/modules/index.ts` carries their module imports, then restart.
+- **Rooms, canvases, or DM onboarding are missing.** Those are the agents feature, not this adapter install — they arrive with `/slack-a2a-rooms` + `/slack-agent-flow` (setup applies both by default). If those skills were applied, check `src/modules/index.ts` carries their module imports, then restart.
