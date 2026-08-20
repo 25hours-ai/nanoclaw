@@ -63,7 +63,7 @@ export interface RestampResult {
  * manifest (the full walk/caps/lint pass runs in the stamp it gates, not in
  * this probe).
  */
-export async function groupsCarryingPlugin(ref: string): Promise<AgentGroup[]> {
+export async function groupsCarryingPlugin(ref: string, groups?: readonly AgentGroup[]): Promise<AgentGroup[]> {
   const dir = resolveLocalTemplate(ref);
   const manifestPath = path.join(dir, PLUGIN_MANIFEST_FILE);
   // The fast path reads ONLY a regular manifest file. Anything else — absent
@@ -74,7 +74,7 @@ export async function groupsCarryingPlugin(ref: string): Promise<AgentGroup[]> {
     parseTemplate(dir);
   }
   const manifest = parsePluginManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf-8')));
-  return (await getAllAgentGroups()).filter((g) =>
+  return (groups ?? (await getAllAgentGroups())).filter((g) =>
     fs.existsSync(path.join(resolveGroupFolderPath(g.folder), 'plugins', manifest.name, PLUGIN_MANIFEST_FILE)),
   );
 }
