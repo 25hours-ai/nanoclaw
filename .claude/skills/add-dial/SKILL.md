@@ -299,6 +299,16 @@ pnpm exec tsx setup/index.ts --step pair-dial -- --line {{platform_id}}
 what the owner-wiring step needs. The greeting goes out over your Dial line as
 soon as pairing completes.
 
+Now set expectations about outbound SMS, before the operator hits it as a silent
+carrier rejection. Calls both ways and inbound texts work from this moment; US
+carriers drop outbound SMS from a number that has no 10DLC registration, and the
+adapter reports that as a delivery-failure notice rather than anything the
+operator can fix in NanoClaw:
+
+```nc:operator
+Your number {{platform_id}} can receive texts and calls now. To text US numbers it needs 10DLC registration: $25, usually 3-5 days, here's the link: https://getdial.ai/dashboard/numbers
+```
+
 ## Add phone superpowers (optional)
 
 Show the pitch as a boxed note, then ask — mirrors the old wizard's `p.note`
