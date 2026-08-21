@@ -86,4 +86,4 @@ These are the verbs you will most often compose. Read the relevant `.md` page fo
 
 ## When a call fails auth (401 / 403)
 
-You run keyless — the gateway injects the credential. A `401`/`403` therefore means the **operator's** Dial credential is missing, unassigned, or invalid in the vault — not something you can fix from here. Tell the operator plainly: the Dial credential needs to be (re)connected for this agent — check the Dial secret's assignment in OneCLI. Then stop and wait rather than retrying in a loop.
+You run keyless — the gateway injects the credential, so neither error is something you can fix from here. A `403 blocked_by_policy` means the operator chose not to give **this** agent Dial access: say so plainly and stop. A `401` means the operator's Dial credential is missing or invalid in the vault: tell the operator the Dial credential needs (re)connecting. In both cases stop and wait rather than retrying in a loop.

@@ -22,17 +22,20 @@ fi
 rm -rf container/skills/dial-cli
 for s in data/v2-sessions/ag-*; do rm -rf "$s/.claude-shared/skills/dial-cli"; done
 
-# 3. Remove the OneCLI credential + strip it from every agent.
+# 3. Remove the OneCLI credential. Deleting it is what revokes access for
+#    every agent; per-agent secret lists are not edited (set-secrets would
+#    switch an all-mode agent to selective and cut it off from other secrets).
 if command -v onecli >/dev/null 2>&1; then
   SID=$(onecli secrets list 2>/dev/null | jq -r '.data[] | select(.name | test("(?i)dial")) | .id' | head -1 || true)
   if [ -n "$SID" ]; then
-    for a in $(onecli agents list 2>/dev/null | jq -r '.data[].id' 2>/dev/null || true); do
-      REM=$(onecli agents secrets --id "$a" 2>/dev/null | jq -r --arg id "$SID" '[.data[] | select(. != $id)] | join(",")' 2>/dev/null || true)
-      onecli agents set-secrets --id "$a" --secret-ids "$REM" >&2 2>/dev/null || true
-    done
     onecli secrets delete --id "$SID" >&2 2>/dev/null || true
     log "removed the Dial secret from the OneCLI vault"
   fi
+  # Drop the per-agent block rules add.sh created (name-prefixed so only ours go).
+  for r in $(onecli rules list 2>/dev/null | jq -r '.data[] | select(.hostPattern=="api.getdial.ai" and .action=="block" and (.name | startswith("Dial: blocked for "))) | .id' 2>/dev/null || true); do
+    onecli rules delete --id "$r" >&2 2>/dev/null || true
+  done
+  log "removed the per-agent Dial block rules"
 fi
 
 # 4. Rebuild (only if the manifest changed) + restart running containers.
