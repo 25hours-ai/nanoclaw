@@ -1883,7 +1883,9 @@ async function askChannelChoice(): Promise<ChannelChoice> {
     await brightSelect<ChannelChoice>({
       message: 'Want to chat with your assistant from your phone?',
       options: [
-        { value: 'telegram', label: 'Yes, connect Telegram', hint: 'recommended' },
+        { value: 'slack', label: 'Yes, connect Slack', hint: 'NEW!! one-click install' },
+        { value: 'teams', label: 'Yes, connect Microsoft Teams' },
+        { value: 'telegram', label: 'Yes, connect Telegram' },
         { value: 'discord', label: 'Yes, connect Discord' },
         { value: 'whatsapp', label: 'Yes, connect WhatsApp', hint: 'best with a dedicated number' },
         { value: 'dial', label: 'Yes, connect Dial', hint: 'a dedicated phone number for your agent — place calls, SMS — worldwide' },
@@ -1897,12 +1899,6 @@ async function askChannelChoice(): Promise<ChannelChoice> {
           label: 'Yes, connect iMessage',
           hint: 'local Mac or hosted iMessage (via photon.codes)',
         },
-        {
-          value: 'slack',
-          label: 'Yes, connect Slack (experimental)',
-          hint: 'needs public URL',
-        },
-        { value: 'teams', label: 'Yes, connect Microsoft Teams', hint: 'complex setup' },
         { value: 'other', label: 'Other…', hint: 'install via /add-<name> after setup' },
         { value: 'skip', label: 'Skip for now', hint: "I'll just use the terminal" },
       ],
