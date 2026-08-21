@@ -88,12 +88,17 @@ command -v dial >/dev/null || npm install -g @getdial/cli@0.37.0
 
 ## Sign in to Dial
 
-Dial's CLI owns the account credential (an auth file it writes on sign-in). Check
-whether this host is already signed in:
+Dial's CLI owns the account credential (an auth file it writes on sign-in).
+
+### Check the host sign-in
+
+Is this host already signed in?
 
 ```nc:run capture:signed_in=.auth.signedIn validate:^(true|false)$ effect:fetch
 DIAL_USER_AGENT={{dial_ua}} dial doctor --json
 ```
+
+### Read the account
 
 If it **is**, read which account — that account's key is what the chosen agents
 will use:
@@ -104,6 +109,8 @@ DIAL_USER_AGENT={{dial_ua}} dial doctor --json
 ```nc:operator when:signed_in=true
 This host is signed in to Dial as {{connected_email}}; the agents you chose will use that account. To give them a different account, run `dial auth login <email> --force` and `dial auth verify-otp --code <code>` on the host first, then run /add-dial-tool again.
 ```
+
+### Send the code
 
 If it is **not**, verify an email with a one-time code. Collect the email:
 
@@ -116,6 +123,8 @@ Send the code (`--force` re-sends even if a prior code is pending):
 ```nc:run effect:external when:signed_in=false
 DIAL_USER_AGENT={{dial_ua}} dial auth login {{owner_email}} --force
 ```
+
+### Verify the code
 
 Collect the code:
 
@@ -175,6 +184,8 @@ K=$(jq -r '.apiKey // empty' "${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.
 
 ## Scope it to the chosen agents
 
+### Create the OneCLI agents
+
 NanoClaw gives every agent group its own OneCLI agent whose `identifier` is the
 group id, created on the group's first spawn. A group that has never spawned has
 no OneCLI agent yet, and a block rule needs one to attach to — so create the
@@ -185,6 +196,8 @@ touched):
 G=$(ncl groups list --json) || { echo "could not list agent groups — is the NanoClaw host running?" >&2; exit 1; }; AG=$(onecli agents list) || { echo "could not list OneCLI agents" >&2; exit 1; }; printf '%s' "$G" | jq -r '.data[] | "\(.id)\t\(.name)"' | while IFS="$(printf '\t')" read -r gid gname; do printf '%s' "$AG" | jq -e --arg g "$gid" '.data[] | select(.identifier==$g)' >/dev/null || onecli agents create --name "$gname" --identifier "$gid" >/dev/null || { echo "could not create an OneCLI agent for $gname ($gid)" >&2; exit 1; }; done
 ```
 
+### Set the block rules
+
 The one switch is a per-agent **block rule** on `api.getdial.ai`, named
 `Dial: blocked for <group>` so only this skill's rules are ever read or written
 (an operator's own rules on the host are left alone). A chosen agent has its
@@ -194,6 +207,8 @@ blocked_by_policy` in a container means "not chosen", not "broken":
 ```nc:run effect:wire
 A=$(printf '%s' '{{dial_agents}}' | tr -d ' '); G=$(ncl groups list --json) || { echo "could not list agent groups — is the NanoClaw host running?" >&2; exit 1; }; case ",$A," in *,all,*) A=$(printf '%s' "$G" | jq -r '[.data[].id] | join(",")');; esac; AG=$(onecli agents list) || { echo "could not list OneCLI agents" >&2; exit 1; }; RL=$(onecli rules list) || { echo "could not list OneCLI rules" >&2; exit 1; }; printf '%s' "$G" | jq -r '.data[] | "\(.id)\t\(.name)"' | while IFS="$(printf '\t')" read -r gid gname; do aid=$(printf '%s' "$AG" | jq -r --arg g "$gid" 'first(.data[] | select(.identifier==$g)) | .id // empty'); [ -n "$aid" ] || { echo "no OneCLI agent for $gname ($gid)" >&2; exit 1; }; rid=$(printf '%s' "$RL" | jq -r --arg a "$aid" 'first(.data[] | select(.hostPattern=="api.getdial.ai" and .action=="block" and .agentId==$a and (.name | startswith("Dial: blocked for ")) and ((.pathPattern // "")=="") and ((.method // "")==""))) | .id // empty'); case ",$A," in *,"$gid",*) if [ -n "$rid" ]; then onecli rules delete --id "$rid" >/dev/null || { echo "could not remove the Dial block for $gname ($gid)" >&2; exit 1; }; fi; echo "allowed: $gname ($gid)";; *) if [ -z "$rid" ]; then onecli rules create --name "Dial: blocked for $gname" --host-pattern api.getdial.ai --action block --agent-id "$aid" --enabled >/dev/null || { echo "could not create the Dial block for $gname ($gid)" >&2; exit 1; }; else onecli rules update --id "$rid" --enabled true >/dev/null || { echo "could not re-enable the Dial block for $gname ($gid)" >&2; exit 1; }; fi; echo "blocked: $gname ($gid)";; esac; done
 ```
+
+### Merge secrets for selective agents
 
 Secret lists are left alone, with one exception. An agent in `selective` mode only
 gets the secrets on its list, so a **chosen** selective agent has the Dial secret
@@ -208,6 +223,8 @@ A=$(printf '%s' '{{dial_agents}}' | tr -d ' '); case ",$A," in *,all,*) A=$(ncl 
 
 ## Hand the tool to running agents
 
+### Sync the skill into existing sessions
+
 Container skills are copied into each group's session directory once, at group
 creation, and not synced after. Copy the skill file into every existing session
 so agents that already exist see it on their next turn:
@@ -215,6 +232,8 @@ so agents that already exist see it on their next turn:
 ```nc:run effect:external
 for s in data/v2-sessions/ag-*/.claude-shared/skills; do [ -d "$s" ] || continue; mkdir -p "$s/dial-cli" && cp container/skills/dial-cli/SKILL.md "$s/dial-cli/SKILL.md" || exit 1; done
 ```
+
+### Restart the agents
 
 Stop running agent containers so they respawn on the new image with the CLI
 (the service stays up; each agent comes back on its next message):
