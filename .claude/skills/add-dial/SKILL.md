@@ -306,7 +306,7 @@ adapter reports that as a delivery-failure notice rather than anything the
 operator can fix in NanoClaw:
 
 ```nc:operator
-Your number {{platform_id}} can receive texts and calls now. To text US numbers it needs 10DLC registration: $25, usually 3-5 days, here's the link: https://getdial.ai/dashboard/numbers
+Your number {{platform_id}} can receive texts and calls now. To text US numbers it needs 10DLC registration: $25, usually 3-5 business days, here's the link: https://getdial.ai/dashboard/numbers
 ```
 
 ## Add phone superpowers (optional)
