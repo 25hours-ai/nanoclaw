@@ -40,8 +40,8 @@ The `dial-cli` container skill is deliberately **not** copied here.
 (`src/container-runner.ts`), and a group with `skills:'all'` picks up whatever
 it finds there — so shipping the skill with the adapter would hand it to agents
 on installs that never configured Dial. It is installed only by
-`add-dial-tool/add.sh`, under *Add phone superpowers* below, which is the step
-that actually provisions the CLI the skill documents.
+`/add-dial-tool`, offered under *Add phone superpowers* below, which is the
+skill that actually provisions the CLI the skill documents.
 
 `dial.ts` imports `dial-user-agent.js` at module scope, so omitting that helper
 breaks the build and every test that loads the channel barrel.
@@ -109,6 +109,17 @@ it's missing (for the full onboarding/auth reference, see the `dial-cli` skill o
 command -v dial || curl -fsSL https://getdial.ai/install | bash
 ```
 
+Calls this setup makes to Dial identify the install. The `dial` CLI prepends
+`DIAL_USER_AGENT` to its own token, so the account's requests stay attributable
+to this NanoClaw install in Dial's server-side logs. Resolve the token once
+(`nanoclaw/<version>`; an unreadable `package.json` degrades to
+`nanoclaw/unknown` rather than blocking the install) and prefix every `dial`
+command below with it:
+
+```nc:run capture:dial_ua validate:^nanoclaw/\S+$ effect:fetch
+node -p "'nanoclaw/'+(require('./package.json').version||'unknown')" 2>/dev/null || echo nanoclaw/unknown
+```
+
 Now pin the CLI's **absolute** path into `.env`. The adapter shells out to `dial`
 to register its inbound command target, and it runs inside the NanoClaw service,
 which does not inherit your interactive shell's `PATH`. The CLI usually lands in
@@ -128,7 +139,7 @@ DIAL_CLI_PATH={{dial_cli_path}}
 Check whether you're already signed in:
 
 ```nc:run capture:signed_in=.auth.signedIn validate:^(true|false)$ effect:fetch
-.claude/skills/add-dial-tool/dial.sh doctor --json
+DIAL_USER_AGENT={{dial_ua}} dial doctor --json
 ```
 
 If you're **not** signed in, go straight to email verification — default the
@@ -143,7 +154,7 @@ whether to reuse it or sign in as a different one (matches the old wizard's
 "Reuse this account?" prompt, with an explicit way to switch):
 
 ```nc:run capture:connected_email=.auth.email when:signed_in=true effect:fetch
-.claude/skills/add-dial-tool/dial.sh doctor --json
+DIAL_USER_AGENT={{dial_ua}} dial doctor --json
 ```
 ```nc:operator when:signed_in=true
 You're already signed in to Dial as {{connected_email}}.
@@ -156,7 +167,7 @@ Reuse this Dial account, or sign in as a different one? (reuse/switch)
 the NanoClaw agent skill:
 
 ```nc:run effect:external when:reuse_choice=reuse
-.claude/skills/add-dial-tool/dial.sh auth verify-otp --agent nanoclaw
+DIAL_USER_AGENT={{dial_ua}} dial auth verify-otp --agent nanoclaw
 ```
 
 **Switch (or not signed in)** — verify an email with a one-time code. Collect the email:
@@ -168,7 +179,7 @@ What's your email? Dial sends a one-time code to verify it. By continuing you cr
 Send the code (`--force` re-sends even if a prior code is pending):
 
 ```nc:run effect:external when:reuse_choice=switch
-.claude/skills/add-dial-tool/dial.sh auth login {{owner_email}} --force
+DIAL_USER_AGENT={{dial_ua}} dial auth login {{owner_email}} --force
 ```
 
 Collect the code (resolves inline, right after the send above):
@@ -180,14 +191,14 @@ Enter the 6-digit code from your email
 Verify it and provision your number (this also installs the NanoClaw agent skill):
 
 ```nc:run effect:external when:reuse_choice=switch
-.claude/skills/add-dial-tool/dial.sh auth verify-otp --code {{otp}} --agent nanoclaw
+DIAL_USER_AGENT={{dial_ua}} dial auth verify-otp --code {{otp}} --agent nanoclaw
 ```
 
 Confirm the account's number — this becomes the agent's public line (its
 `platform_id`):
 
 ```nc:run capture:platform_id validate:^\+[1-9]\d{6,14}$ effect:fetch
-.claude/skills/add-dial-tool/dial.sh number list --json | jq -er '.numbers[0].number'
+DIAL_USER_AGENT={{dial_ua}} dial number list --json | jq -er '.numbers[0].number'
 ```
 ```nc:operator
 Your agent's Dial line is {{platform_id}}.
@@ -198,7 +209,7 @@ this number. Verification no longer takes an instruction, so a fresh number
 starts on Dial's default greeting until this runs:
 
 ```nc:run effect:external
-.claude/skills/add-dial-tool/dial.sh number set {{platform_id}} --inbound-instruction "You are a friendly AI receptionist answering calls to this number. Greet the caller, ask how you can help, and take a clear message — their name, number, and reason for calling — if you cannot help directly."
+DIAL_USER_AGENT={{dial_ua}} dial number set {{platform_id}} --inbound-instruction "You are a friendly AI receptionist answering calls to this number. Greet the caller, ask how you can help, and take a clear message — their name, number, and reason for calling — if you cannot help directly."
 ```
 
 Make that line the CLI's default sender. Verification saves whichever number
@@ -212,7 +223,7 @@ Rewriting `phoneNumber`/`phoneNumberId` in the auth file makes the no-flag path
 land on the wired line, so an agent that forgets the selector is still correct:
 
 ```nc:run effect:external
-f="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"; i=$(.claude/skills/add-dial-tool/dial.sh number list --json | jq -er --arg n '{{platform_id}}' '.numbers[]|select(.number==$n)|.id') && jq --arg n '{{platform_id}}' --arg i "$i" '.phoneNumber=$n|.phoneNumberId=$i' "$f" > "$f.new" && mv -f "$f.new" "$f" && chmod 600 "$f" && echo "default sender pinned to {{platform_id}}"
+f="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"; i=$(DIAL_USER_AGENT={{dial_ua}} dial number list --json | jq -er --arg n '{{platform_id}}' '.numbers[]|select(.number==$n)|.id') && jq --arg n '{{platform_id}}' --arg i "$i" '.phoneNumber=$n|.phoneNumberId=$i' "$f" > "$f.new" && mv -f "$f.new" "$f" && chmod 600 "$f" && echo "default sender pinned to {{platform_id}}"
 ```
 
 ## Choose who may text the line
@@ -259,10 +270,10 @@ outbound still works and inbound can be started manually later (see
 Troubleshooting), so these never fail the run:
 
 ```nc:run effect:external
-.claude/skills/add-dial-tool/dial.sh listen install || true
+DIAL_USER_AGENT={{dial_ua}} dial listen install || true
 ```
 ```nc:run effect:external
-.claude/skills/add-dial-tool/dial.sh local-target add cmd "$PWD/data/dial/handle-dial-event.sh" || true
+DIAL_USER_AGENT={{dial_ua}} dial local-target add cmd "$PWD/data/dial/handle-dial-event.sh" || true
 ```
 
 Register the line, carrying the access choice from above onto its own row. One
@@ -321,12 +332,14 @@ Add phone superpowers to your assistant? Say yes so your assistant can send SMS 
 Install the Dial tool now?
 ```
 
-If yes, install it (best-effort — this reuses the standalone tool installer, which
-needs OneCLI; it prints its own guidance and never fails the run if OneCLI isn't
-set up yet):
+If yes, apply the `/add-dial-tool` skill now, as its own document describes. It
+asks which agents may use Dial (and blocks the rest at the gateway), puts the
+CLI and its skill in the agent image, and registers the account's key with
+OneCLI. It needs OneCLI; if that isn't set up it says so, and the channel
+still works without the tool:
 
-```nc:run effect:external when:install_tool=yes
-bash .claude/skills/add-dial-tool/add.sh || true
+```nc:run effect:step when:install_tool=yes
+pnpm exec tsx setup/lib/skill-driver.ts .claude/skills/add-dial-tool
 ```
 
 Then tell the sandboxed agent which line is its own. The container authenticates

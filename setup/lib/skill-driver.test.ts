@@ -11,9 +11,10 @@ import {
   literalChoices,
   promptValidator,
   clackResolveInput,
+  applyOutcome,
   type RunSkillOptions,
 } from './skill-driver.js';
-import { fullyApplied, type ApplyEvent } from '../../scripts/skill-apply.js';
+import { fullyApplied, type ApplyEvent, type ApplyResult } from '../../scripts/skill-apply.js';
 
 // Shared test state for the clack + claude-handoff mocks (hoisted so the vi.mock
 // factories — which run before imports — can close over it). `answers` is the
@@ -525,5 +526,29 @@ describe('labelOrdinals (repeated-caption disambiguation)', () => {
     const suffixes = [...labelOrdinals(md).values()];
     expect(suffixes).toContain(' (1/2)');
     expect(suffixes).toContain(' (2/2)');
+  });
+});
+
+describe('applyOutcome (the CLI verdict a nesting effect:step reads)', () => {
+  const base: ApplyResult = {
+    deferred: [],
+    agentTasks: [],
+    journal: [],
+    vars: {},
+    operatorMessages: [],
+  } as unknown as ApplyResult;
+
+  it('a full apply is success / exit 0', () => {
+    expect(applyOutcome(base)).toEqual({ status: 'success', exitCode: 0 });
+  });
+
+  it('deferred input or a bounced directive is failed / exit 1 — never a silent success to the caller', () => {
+    expect(applyOutcome({ ...base, deferred: ['token'] })).toEqual({ status: 'failed', exitCode: 1 });
+    expect(
+      applyOutcome({
+        ...base,
+        agentTasks: [{ line: 3, kind: 'run', reason: 'exit 1: boom' }] as ApplyResult['agentTasks'],
+      }),
+    ).toEqual({ status: 'failed', exitCode: 1 });
   });
 });

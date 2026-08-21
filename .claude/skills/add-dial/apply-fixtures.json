@@ -1,5 +1,5 @@
 {
-  "notes": "Conformance fixtures for scripts/skill-conformance.test.ts \u2014 shaped fake values only, never real credentials. Three scenarios cover the sign-in branches: (1) not signed in \u2192 email+OTP signup (reuse_choice defaults to 'switch' via the echo capture), (2) signed in \u2192 reuse the account, (3) signed in \u2192 switch to a different account (email+OTP). The `command -v dial` stub answers dial_cli_path (pinned into .env so the service never depends on PATH); the `dial.sh doctor` stub answers signed_in/connected_email; `echo switch` answers the default reuse_choice; `number list` answers platform_id; `add-dial-tool/add.sh` answers the optional tool install; stepFields feed the pairing step (capture:owner_handle=PAIRED_NUMBER).",
+  "notes": "Conformance fixtures for scripts/skill-conformance.test.ts — shaped fake values only, never real credentials. Three scenarios cover the sign-in branches: (1) not signed in → email+OTP signup (reuse_choice defaults to 'switch' via the echo capture), (2) signed in → reuse the account, (3) signed in → switch to a different account (email+OTP). The `command -v dial` stub answers dial_cli_path (pinned into .env so the service never depends on PATH); the `package.json` stub answers dial_ua (the DIAL_USER_AGENT token); the `dial doctor` stub answers signed_in/connected_email; `echo switch` answers the default reuse_choice; `number list` answers platform_id; the optional tool install is an effect:step (the nested /add-dial-tool apply) and needs no exec stub; stepFields feed the pairing step (capture:owner_handle=PAIRED_NUMBER).",
   "scenarios": [
     {
       "name": "fresh-signup",
@@ -11,11 +11,15 @@
       },
       "exec": [
         {
+          "match": "package.json",
+          "stdout": "nanoclaw/2.2.0"
+        },
+        {
           "match": "command -v dial",
           "stdout": "/usr/local/bin/dial"
         },
         {
-          "match": "dial.sh doctor",
+          "match": "dial doctor",
           "stdout": "{\"auth\":{\"signedIn\":false}}"
         },
         {
@@ -41,20 +45,20 @@
       },
       "exec": [
         {
+          "match": "package.json",
+          "stdout": "nanoclaw/2.2.0"
+        },
+        {
           "match": "command -v dial",
           "stdout": "/usr/local/bin/dial"
         },
         {
-          "match": "dial.sh doctor",
+          "match": "dial doctor",
           "stdout": "{\"auth\":{\"signedIn\":true,\"email\":\"operator@example.com\"}}"
         },
         {
           "match": "number list",
           "stdout": "+14155550123"
-        },
-        {
-          "match": "add-dial-tool/add.sh",
-          "stdout": ""
         }
       ],
       "stepFields": {
@@ -73,11 +77,15 @@
       },
       "exec": [
         {
+          "match": "package.json",
+          "stdout": "nanoclaw/2.2.0"
+        },
+        {
           "match": "command -v dial",
           "stdout": "/usr/local/bin/dial"
         },
         {
-          "match": "dial.sh doctor",
+          "match": "dial doctor",
           "stdout": "{\"auth\":{\"signedIn\":true,\"email\":\"operator@example.com\"}}"
         },
         {
