@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as p from '@clack/prompts';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import {
   promptValidator,
   clackResolveInput,
   applyOutcome,
+  plainDuration,
   type RunSkillOptions,
 } from './skill-driver.js';
 import { fullyApplied, type ApplyEvent, type ApplyResult } from '../../scripts/skill-apply.js';
@@ -550,5 +552,32 @@ describe('applyOutcome (the CLI verdict a nesting effect:step reads)', () => {
         agentTasks: [{ line: 3, kind: 'run', reason: 'exit 1: boom' }] as ApplyResult['agentTasks'],
       }),
     ).toEqual({ status: 'failed', exitCode: 1 });
+  });
+});
+
+describe('non-TTY step lines (CI logs, a nested apply under the parent driver)', () => {
+  it('plainDuration mirrors the spinner suffix', () => {
+    expect(plainDuration(400)).toBe('(0s)');
+    expect(plainDuration(3_200)).toBe('(3s)');
+    expect(plainDuration(102_000)).toBe('(1m 42s)');
+  });
+
+  it('prints one plain line per finished step when stdout is not a TTY, instead of silence', async () => {
+    // vitest's stdout is a pipe, so the default handler takes the non-TTY path.
+    expect(process.stdout.isTTY).toBeFalsy();
+    const root = mkdtempSync(join(tmpdir(), 'sd-plain-'));
+    const skill = join(root, '.claude/skills/plain');
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(join(root, 'package.json'), '{"name":"scratch"}\n');
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      ['# Plain', '', '## Build the image', '', '```nc:run effect:build', 'echo build', '```', ''].join('\n'),
+    );
+    const success = vi.spyOn(p.log, 'success').mockImplementation(() => {});
+    const res = await runSkill(skill, { projectRoot: root, exec: () => '' });
+    expect(fullyApplied(res)).toBe(true);
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(success.mock.calls[0][0]).toMatch(/^Build the image \(\d+s\)$/);
+    success.mockRestore();
   });
 });

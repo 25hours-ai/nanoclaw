@@ -154,8 +154,8 @@ truth; the host install above uses the same one.
 
 Mount the sandbox-aware `dial-cli` skill so the agent knows the CLI runs keyless
 in there and never asks for credentials. `container/skills/` is mounted read-only
-into every agent container — which is why the key, not the skill file, is what
-gets scoped per agent:
+into every agent container (at `/app/skills`) — which is why the key, not the
+skill file, is what gets scoped per agent:
 
 ```nc:copy
 container-skills/dial-cli/SKILL.md -> container/skills/dial-cli/SKILL.md
@@ -176,10 +176,11 @@ for `api.getdial.ai`. Always **upsert**: the vault is keyed by name, so an
 existing "Dial API" secret is not necessarily this account's (re-onboarding,
 switching accounts, or rotating the key all leave a secret whose value points at
 the previous account, and a sandboxed agent then lists *that* account's numbers).
-The key stays in the shell — it is never captured into a variable or echoed:
+The key travels through a `0600` temp file that is removed right after (`--file`), so it
+never sits on a command line or in a captured variable:
 
 ```nc:run effect:external
-K=$(jq -r '.apiKey // empty' "${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json" 2>/dev/null) && [ -n "$K" ] || { echo "no Dial API key in the host auth file — sign in with dial auth login / verify-otp, then re-run" >&2; exit 1; }; S=$(onecli secrets list | jq -r 'first(.data[] | select(.name | test("(?i)dial"))) | .id // empty'); if [ -n "$S" ]; then onecli secrets update --id "$S" --value "$K" --host-pattern api.getdial.ai >/dev/null; else onecli secrets create --name "Dial API" --type generic --value "$K" --host-pattern api.getdial.ai --header-name Authorization --value-format "Bearer {value}" >/dev/null; fi
+T=$(mktemp) && chmod 600 "$T" && jq -r '.apiKey // empty' "${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json" > "$T" 2>/dev/null; [ -s "$T" ] || { rm -f "$T"; echo "no Dial API key in the host auth file — sign in with dial auth login / verify-otp, then re-run" >&2; exit 1; }; S=$(onecli secrets list | jq -r 'first(.data[] | select(.name | test("(?i)dial"))) | .id // empty'); if [ -n "$S" ]; then onecli secrets update --id "$S" --file "$T" --host-pattern api.getdial.ai >/dev/null; else onecli secrets create --name "Dial API" --type generic --file "$T" --host-pattern api.getdial.ai --header-name Authorization --value-format "Bearer {value}" >/dev/null; fi; rc=$?; rm -f "$T"; exit $rc
 ```
 
 ## Scope it to the chosen agents
@@ -223,23 +224,15 @@ A=$(printf '%s' '{{dial_agents}}' | tr -d ' '); case ",$A," in *,all,*) A=$(ncl 
 
 ## Hand the tool to running agents
 
-### Sync the skill into existing sessions
-
-Container skills are copied into each group's session directory once, at group
-creation, and not synced after. Copy the skill file into every existing session
-so agents that already exist see it on their next turn:
-
-```nc:run effect:external
-for s in data/v2-sessions/ag-*/.claude-shared/skills; do [ -d "$s" ] || continue; mkdir -p "$s/dial-cli" && cp container/skills/dial-cli/SKILL.md "$s/dial-cli/SKILL.md" || exit 1; done
-```
-
-### Restart the agents
-
-Stop running agent containers so they respawn on the new image with the CLI
-(the service stays up; each agent comes back on its next message):
+`container/skills/` is mounted read-only into every agent container, and each
+group's `.claude-shared/skills/` holds symlinks into that mount that are synced
+when the container spawns — so nothing is copied per session. A running agent
+keeps its old image until it respawns, so restart every group; without a
+`--message` each one comes back on its next message, on the new image, with the
+CLI on `PATH` and the skill in place:
 
 ```nc:run effect:external
-docker ps --filter label=nanoclaw-container-name -q | xargs -r docker stop
+ncl groups list --json | jq -r '.data[].id' | while read -r gid; do ncl groups restart --id "$gid" >/dev/null || { echo "could not restart $gid" >&2; exit 1; }; done
 ```
 
 ## Done
@@ -278,5 +271,5 @@ key the host is signed in with.
 only touches the per-agent rules.
 
 **`dial: command not found` inside a container.** The image predates the manifest
-entry. Run `./container/build.sh`, then stop the running agent containers so they
-respawn on it.
+entry. Run `./container/build.sh`, then `ncl groups restart --id <group-id>` so the
+agent respawns on it.

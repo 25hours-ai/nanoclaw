@@ -132,8 +132,8 @@ S="$STATE"
 arg() { local k="$1"; shift; while [ $# -gt 0 ]; do if [ "$1" = "$k" ]; then echo "$2"; return; fi; shift; done; }
 case "$1 $2" in
   "secrets list") cat "$S/secrets.json" ;;
-  "secrets update") echo '{"status":"updated"}' ;;
-  "secrets create") jq '.data += [{"id":"sec-new","name":"Dial API"}]' "$S/secrets.json" > "$S/t" && mv "$S/t" "$S/secrets.json"; echo '{"id":"sec-new"}' ;;
+  "secrets update") f=$(arg --file "$@"); [ -n "$f" ] && cat "$f" > "$S/key-seen"; echo '{"status":"updated"}' ;;
+  "secrets create") f=$(arg --file "$@"); [ -n "$f" ] && cat "$f" > "$S/key-seen"; jq '.data += [{"id":"sec-new","name":"Dial API"}]' "$S/secrets.json" > "$S/t" && mv "$S/t" "$S/secrets.json"; echo '{"id":"sec-new"}' ;;
   "agents list") ${opts.agentsListFails ? 'echo "boom" >&2; exit 1' : 'cat "$S/agents.json"'} ;;
   "agents secrets") cat "$S/assigned.json" ;;
   "agents set-secrets") echo '{"status":"updated"}' ;;
@@ -341,10 +341,15 @@ describe('add-dial-tool: registering the host credential with OneCLI', () => {
     const { status, stdout } = sh(CMD.credential);
     expect(status).toBe(0);
     const lines = callLines();
-    expect(lines).toContain('onecli secrets update --id sec-dial --value sk_test --host-pattern api.getdial.ai');
+    const update = lines.find((l) => l.startsWith('onecli secrets update'));
+    expect(update).toMatch(/^onecli secrets update --id sec-dial --file \S+ --host-pattern api\.getdial\.ai$/);
     expect(lines.some((l) => l.startsWith('onecli secrets create'))).toBe(false);
-    // The key never reaches the command's stdout (the engine journals/logs that).
+    // The key reaches OneCLI through the temp file, never argv or stdout, and the file is gone after.
+    expect(fs.readFileSync(path.join(state, 'key-seen'), 'utf8')).toBe('sk_test\n');
+    expect(update).not.toContain('sk_test');
     expect(stdout).not.toContain('sk_test');
+    const tmp = (update ?? '').match(/--file (\S+)/)?.[1] ?? '';
+    expect(fs.existsSync(tmp)).toBe(false);
   });
 
   it('creates the secret with header injection when the vault has none', () => {
@@ -352,9 +357,11 @@ describe('add-dial-tool: registering the host credential with OneCLI', () => {
     setup({ secrets: [] });
     const { status } = sh(CMD.credential);
     expect(status).toBe(0);
-    expect(callLines()).toContain(
-      'onecli secrets create --name Dial API --type generic --value sk_test --host-pattern api.getdial.ai --header-name Authorization --value-format Bearer {value}',
+    const create = callLines().find((l) => l.startsWith('onecli secrets create'));
+    expect(create).toMatch(
+      /^onecli secrets create --name Dial API --type generic --file \S+ --host-pattern api\.getdial\.ai --header-name Authorization --value-format Bearer \{value\}$/,
     );
+    expect(fs.readFileSync(path.join(state, 'key-seen'), 'utf8')).toBe('sk_test\n');
   });
 
   it('fails loudly when the host has no Dial key, touching nothing', () => {

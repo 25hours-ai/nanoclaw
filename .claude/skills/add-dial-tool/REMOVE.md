@@ -13,11 +13,13 @@ top-level array valid:
 tmp=$(mktemp) && jq 'map(select(.name != "@getdial/cli"))' container/cli-tools.json > "$tmp" && mv "$tmp" container/cli-tools.json
 ```
 
-## 2. Remove the container skill and its per-session copies
+## 2. Remove the container skill
+
+`container/skills/` is a read-only mount; the per-group `.claude-shared/skills/`
+symlink to it is pruned automatically on the next spawn:
 
 ```bash
 rm -rf container/skills/dial-cli
-for s in data/v2-sessions/ag-*/.claude-shared/skills/dial-cli; do rm -rf "$s"; done
 ```
 
 ## 3. Remove the OneCLI credential and the per-agent block rules
@@ -35,12 +37,12 @@ for id in $(onecli rules list | jq -r '.data[] | select(.hostPattern=="api.getdi
 
 ## 4. Rebuild and restart the agents
 
-Rebuild the image so it matches the manifest, then stop running agent
-containers so they respawn without the CLI:
+Rebuild the image so it matches the manifest, then restart every group so the
+agents respawn without the CLI (each comes back on its next message):
 
 ```bash
 ./container/build.sh
-docker ps --filter label=nanoclaw-container-name -q | xargs -r docker stop
+ncl groups list --json | jq -r '.data[].id' | while read -r gid; do ncl groups restart --id "$gid"; done
 ```
 
 The Dial account, its numbers, and the host `dial` CLI are managed by Dial, not

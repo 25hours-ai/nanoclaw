@@ -346,10 +346,11 @@ Then tell the sandboxed agent which line is its own. The container authenticates
 through the OneCLI proxy and has **no** auth file, so `defaultNumberId` is null
 in there — an agent that omits `--from-number` gets an error, and one that picks
 from `dial number list` gets whichever number sorts first, which is unrelated to
-what's wired. Only this skill knows the answer, so it has to write it down:
+what's wired. Only this skill knows the answer, so it has to write it down —
+into the mounted skill file, which every container reads on its next spawn:
 
 ```nc:run effect:external when:install_tool=yes
-if [ ! -f container/skills/dial-cli/SKILL.md ]; then echo "dial-cli skill not installed (the tool installer did not complete) — skipping the wired-line note"; else printf '\n## This install'"'"'s line\n\nAlways pass `--from-number {{platform_id}}` on every `dial call` and `dial message`. That is the line this NanoClaw install is wired to; any other number on the account reaches nobody and replies to it are dropped.\n' >> container/skills/dial-cli/SKILL.md && for s in data/v2-sessions/*/*/; do [ -d "$s/.claude-shared/skills" ] && cp container/skills/dial-cli/SKILL.md "$s/.claude-shared/skills/dial-cli/SKILL.md" 2>/dev/null; done; echo "wired line recorded for the sandbox: {{platform_id}}"; fi
+if [ ! -f container/skills/dial-cli/SKILL.md ]; then echo "dial-cli skill not installed (the tool installer did not complete) — skipping the wired-line note"; else printf '\n## This install'"'"'s line\n\nAlways pass `--from-number {{platform_id}}` on every `dial call` and `dial message`. That is the line this NanoClaw install is wired to; any other number on the account reaches nobody and replies to it are dropped.\n' >> container/skills/dial-cli/SKILL.md && echo "wired line recorded for the sandbox: {{platform_id}}"; fi
 ```
 
 ## Next Steps
