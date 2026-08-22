@@ -19,7 +19,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { initTestDb, closeDb, runMigrations, getDb } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import { createNewAgentGroup } from './channel-approval.js';
+import { AGENT_ACCESS_SCOPE_WARNING, createNewAgentGroup } from './channel-approval.js';
 import { createMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import {
   initChannelAdapters,
@@ -245,10 +245,11 @@ describe('unknown-channel registration flow', () => {
     expect(payload.type).toBe('ask_question');
     expect(payload.title).toBe('📣 Bot mentioned in new channel');
     expect(payload.question).toBe(
-      'Caller mentioned your bot in a telegram channel. If connected, the agent will respond to @-mentions in this group. How would you like to handle this channel?',
+      `Caller mentioned your bot in a telegram channel. If connected, the agent will respond to @-mentions in this group. ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this channel?`,
     );
     // Card tells the approver the resolved engage rule.
     expect(payload.question).toContain('will respond to @-mentions in this group');
+    expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
     // Single-agent card offers a direct "Connect to <name>" button.
     const connectOption = payload.options.find((o: { value: string }) => o.value.startsWith('connect:'));
     expect(connectOption).toBeDefined();
@@ -273,6 +274,7 @@ describe('unknown-channel registration flow', () => {
     const payload = JSON.parse(deliverMock.mock.calls[0][4] as string) as { title: string; question: string };
     expect(payload.title).toBe('👥 Bot mentioned in new group chat');
     expect(payload.question).toContain('Alice Doe mentioned your bot in a group chat with Bob and Carol on slack.');
+    expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
     expect(payload.question).toContain('How would you like to handle this group chat?');
     expect(payload.question).not.toContain('mpdm-');
     expect(resolveConversationMock).toHaveBeenCalledWith('mpdm-alice--bob--carol-1');
@@ -300,6 +302,7 @@ describe('unknown-channel registration flow', () => {
     expect(deliverMock).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(deliverMock.mock.calls[0][4] as string) as { question: string };
     expect(payload.question).toContain('will respond to all messages');
+    expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
     const count = await countRows('SELECT COUNT(*) AS c FROM pending_channel_approvals');
     expect(count).toBe(1);
   });
@@ -658,8 +661,10 @@ describe('unknown-channel registration flow', () => {
     }
 
     const followupPayload = JSON.parse(deliverMock.mock.calls[1][4] as string) as {
+      question: string;
       options: Array<{ label: string; value: string }>;
     };
+    expect(followupPayload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
     expect(followupPayload.options.map((option) => option.value)).toContain('connect:ag-1');
     expect(followupPayload.options.map((option) => option.value)).not.toContain('connect:ag-2');
 
