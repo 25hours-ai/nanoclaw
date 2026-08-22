@@ -20,9 +20,9 @@
  * payloads (git fetch + git show, remote resolution included). Setup runs
  * under tsx, so importing the fetched .ts file directly works.
  *
- * Loaded ONLY behind the NANOCLAW_SLACK_AGENTS opt-in: slack-auto-register.ts
- * dynamic-imports this module when the flag is set, so the default wizard
- * never evaluates this file or its strings.
+ * Loaded through slack-auto-register.ts via dynamic import, so a wizard run
+ * that never reaches the Slack pre-step never evaluates this file or its
+ * strings.
  *
  * Returns undefined to mean "walk the manual path" — never throws for
  * expected declines (not signed in, provisioning refused, cancel) or for
@@ -52,6 +52,9 @@ import {
 import { ensureAnswer } from '../lib/runner.js';
 import { wrapForGutter } from '../lib/theme.js';
 
+// Both browser round-trips this file waits on — connecting a workspace, and
+// approving an app install — are the same wait: an operator finishing an OAuth
+// step in another window and coming back.
 const OAUTH_POLL_INTERVAL_MS = 5_000;
 const OAUTH_POLL_TIMEOUT_MS = 5 * 60_000;
 
@@ -96,6 +99,20 @@ export interface ProvisioningCore {
   BrokerHttpError: new (status: number, path: string, detail?: string) => Error & { status: number; path: string };
   brokerListWorkspaces(token: string): Promise<BrokerWorkspace[]>;
   brokerOauthUrl(token: string): Promise<{ url: string }>;
+  /**
+   * Deferred install completion, for workspaces that make an admin approve
+   * every app install. OPTIONAL on purpose: an installed tree carries whatever
+   * version of the core its add-slack payload shipped, and a core that
+   * predates these must leave this flow working — it degrades to the manual
+   * walkthrough rather than failing. `waitForInstall` is what this flow drives;
+   * `brokerAppStatus` is the single read it polls with.
+   */
+  brokerAppStatus?(token: string, appId: string): Promise<{ status: string; bot_token?: string | null }>;
+  waitForInstall?(
+    token: string,
+    appId: string,
+    opts?: { intervalMs?: number; timeoutMs?: number; onPoll?: (elapsedMs: number) => void },
+  ): Promise<{ botToken: string } | null>;
   brokerProvision(
     token: string,
     spec: { team_id: string; name: string; requested_by?: string; client_version?: string },
@@ -238,13 +255,13 @@ export async function maybeAutoProvisionSlack(
           value: 'auto',
           label: 'Create it for me',
           hint: needsSignIn
-            ? 'sign in with your NanoClaw account, then app + install in one step'
-            : 'app + install in one step, no token pasting',
+            ? 'Add Agent to Slack — sign in with your NanoClaw account, then app + install in one step'
+            : 'Add Agent to Slack — app + install in one step, no token pasting',
         },
         {
           value: 'manual',
-          label: 'I will supply my own bot token',
-          hint: 'advanced — walk through api.slack.com/apps by hand',
+          label: 'I will create it myself',
+          hint: 'walk through api.slack.com/apps by hand',
         },
       ],
     }),
@@ -351,7 +368,9 @@ async function provisionDirect(
       name,
       ...(clientVersion ? { client_version: clientVersion } : {}),
     });
-    return finishProvisioned(app, name, s, start, 'slack-provision');
+    // No `install` argument: finishing an install is a read against the
+    // broker, and a manager-token install has no credential there.
+    return await finishProvisioned(app, name, s, start, 'slack-provision');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     s.stop("Couldn't create the Slack app.", 1);
@@ -475,7 +494,7 @@ async function provisionViaBroker(
       ...(workspace.connected_as ? { requested_by: workspace.connected_as } : {}),
       ...(clientVersion ? { client_version: clientVersion } : {}),
     });
-    const inputs = finishProvisioned(app, name, s2, start, 'slack-broker-provision');
+    const inputs = await finishProvisioned(app, name, s2, start, 'slack-broker-provision', { core, token });
     // The broker knows who connected the workspace — pre-fill the member-ID
     // prompt too (only when it matches the skill's validator; Enterprise Grid
     // W-ids fall back to the prompt like before).
@@ -493,35 +512,46 @@ async function provisionViaBroker(
 }
 
 /**
- * Map a provisioned app onto the skill's inputs. A refused auto-install
- * (admin-approval policy) still returns the app token and lets the skill's
- * own bot_token prompt collect the xoxb after the manual install.
+ * Map a provisioned app onto the skill's inputs.
+ *
+ * A refused auto-install (admin-approval policy) is not a dead end: the app
+ * exists and its install URL stays valid, so when the caller can finish the
+ * install — the broker path, against a core that ships the status read — the
+ * operator approves it in the browser and this waits for the bot token.
+ * Everything else, and every way that wait can end without a token, falls
+ * back to today's behavior: return the app token and let the skill's own
+ * bot_token prompt collect the xoxb after a hand-finished install.
  */
-function finishProvisioned(
+async function finishProvisioned(
   app: ProvisionedApp,
   name: string,
   s: ReturnType<typeof p.spinner>,
   start: number,
   step: string,
-): Record<string, string> {
+  install?: { core: ProvisioningCore; token: string },
+): Promise<Record<string, string>> {
   if (app.botToken) {
     s.stop(`Created and installed ${name}. ${k.dim(`(${Math.round((Date.now() - start) / 1000)}s)`)}`);
     setupLog.step(step, 'success', Date.now() - start, { APP_ID: app.appId, AUTO_INSTALL: 'true' });
     return { connection: 'provisioned', bot_token: app.botToken, app_token: app.appToken };
   }
-  s.stop(`Created ${name}, but Slack wouldn't auto-install it (${app.installError}).`, 1);
+  s.stop(`Created ${name}, but your workspace has to approve the install (${app.installError}).`, 1);
   setupLog.step(step, 'success', Date.now() - start, {
     APP_ID: app.appId,
     AUTO_INSTALL: 'false',
     INSTALL_ERROR: app.installError ?? '',
   });
+
+  const botToken =
+    install && app.installUrl ? await completeInstall(install.core, install.token, app, name) : undefined;
+  if (botToken) return { connection: 'provisioned', bot_token: botToken, app_token: app.appToken };
+
   p.note(
     wrapForGutter(
       [
-        'Your workspace requires a manual install (usually an admin-approval',
-        'policy). Install the app in the browser, then paste the "Bot User',
-        'OAuth Token" (xoxb-…) from its OAuth & Permissions page at the next',
-        'prompt.',
+        'Install the app in the browser, then paste the "Bot User OAuth',
+        'Token" (xoxb-…) from its OAuth & Permissions page at the next',
+        'prompt. The app itself is created — this is the last step it needs.',
         '',
         k.dim(app.installUrl || 'https://api.slack.com/apps'),
       ].join('\n'),
@@ -530,6 +560,68 @@ function finishProvisioned(
     'Finish installing in Slack',
   );
   return { connection: 'provisioned', app_token: app.appToken };
+}
+
+/**
+ * Walk the operator through approving the install, then wait for the bot
+ * token the completed install releases. Undefined means "walk the manual
+ * path" — an older core, a refusal, or an approval that has not landed yet.
+ */
+async function completeInstall(
+  core: ProvisioningCore,
+  token: string,
+  app: ProvisionedApp,
+  name: string,
+): Promise<string | undefined> {
+  if (!core.waitForInstall || !core.brokerAppStatus) {
+    p.log.warn("This copy's Slack provisioning module can't finish the install for you — doing it by hand instead.");
+    setupLog.step('slack-install-wait', 'skipped', 0, { REASON: 'core-predates-status-read' });
+    return undefined;
+  }
+  p.note(
+    wrapForGutter(
+      [
+        'Your workspace asks an admin to approve every app install, so',
+        `${name} is created but not installed yet. Approve it in the`,
+        "browser and come back — I'll pick it up from there, no token",
+        'pasting needed.',
+      ].join('\n'),
+      6,
+    ),
+    'Approve the install',
+  );
+  await confirmThenOpen(app.installUrl, 'Press Enter to open Slack and approve the install');
+
+  const s = p.spinner();
+  const start = Date.now();
+  s.start('Waiting for the install to be approved…');
+  let installed: { botToken: string } | null;
+  try {
+    installed = await core.waitForInstall(token, app.appId, {
+      intervalMs: OAUTH_POLL_INTERVAL_MS,
+      timeoutMs: OAUTH_POLL_TIMEOUT_MS,
+    });
+  } catch (err) {
+    // The core rethrows only what polling cannot fix — a credential this
+    // service will not accept, whatever the workspace does next.
+    const message = err instanceof Error ? err.message : String(err);
+    s.stop("The Slack service didn't accept this install's credentials.", 1);
+    setupLog.step('slack-install-wait', 'failed', Date.now() - start, { ERROR: message });
+    p.log.warn(`The service said: ${message}.`);
+    return undefined;
+  }
+  if (installed) {
+    s.stop(`Installed ${name}. ${k.dim(`(${Math.round((Date.now() - start) / 1000)}s)`)}`);
+    setupLog.step('slack-install-wait', 'success', Date.now() - start, { APP_ID: app.appId });
+    return installed.botToken;
+  }
+  s.stop("The install hasn't been approved yet.", 1);
+  setupLog.step('slack-install-wait', 'failed', Date.now() - start, { ERROR: 'timeout', APP_ID: app.appId });
+  p.log.warn(
+    `Approvals often take longer than this. ${name} is created and its app-level token is saved, so nothing needs ` +
+      'creating again — once the install goes through, paste the bot token below to finish.',
+  );
+  return undefined;
 }
 
 /**

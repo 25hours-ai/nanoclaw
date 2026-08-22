@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   writeImageSource: vi.fn(),
   clearImageSource: vi.fn(),
   runInheritScript: vi.fn(async () => 0),
+  confirmThenOpen: vi.fn(async () => {}),
   brokerListWorkspaces: vi.fn(async () => [
     { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' },
   ]),
@@ -54,7 +55,9 @@ vi.mock('../lib/bright-select.js', () => ({
     },
   ),
 }));
-vi.mock('../lib/browser.js', () => ({ confirmThenOpen: vi.fn() }));
+// Hoisted rather than a bare vi.fn(): the install-approval tests assert which
+// URL the operator was sent to.
+vi.mock('../lib/browser.js', () => ({ confirmThenOpen: state.confirmThenOpen }));
 vi.mock('../lib/inherit-script.js', () => ({ runInheritScript: state.runInheritScript }));
 vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => undefined) }));
 vi.mock('../lib/registry-state.js', () => ({
@@ -118,6 +121,8 @@ function resetBrokerMocks(): void {
   state.infos.length = 0;
   state.runInheritScript.mockReset();
   state.runInheritScript.mockImplementation(async () => 0);
+  state.confirmThenOpen.mockReset();
+  state.confirmThenOpen.mockImplementation(async () => {});
   state.brokerListWorkspaces.mockReset();
   state.brokerListWorkspaces.mockImplementation(async () => [
     { team_id: 'T0TEAM123', team_name: 'NanoCo', status: 'active', connected_as: 'U0OWNER12' },
@@ -666,5 +671,131 @@ describe('provision request metadata', () => {
     expect(state.brokerProvision).not.toHaveBeenCalled();
     expect(state.runInheritScript).not.toHaveBeenCalled();
     expect(result).toMatchObject({ connection: 'provisioned', bot_token: 'xoxb-test', app_token: 'xapp-test' });
+  });
+});
+
+describe('a workspace that has to approve the install', () => {
+  const INSTALL_URL = 'https://slack.com/oauth/v2/authorize?client_id=1.2&state=signed-state';
+
+  /** POST /v1/apps came back with a link instead of a bot token. */
+  function refusedApp(): void {
+    state.brokerProvision.mockResolvedValue({
+      appId: 'A0APP123',
+      appToken: 'xapp-test',
+      installUrl: INSTALL_URL,
+      installError: 'app_approval_request_eligible',
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetBrokerMocks();
+    state.notes.length = 0;
+    state.warns.length = 0;
+    state.installToken = 'nct-saved';
+    state.account = { token: 'nct-saved', api: 'https://registry.sandbox.nanoclaw.dev' };
+  });
+
+  it('opens the approval, waits for it, and finishes exactly like an auto-installed app', async () => {
+    refusedApp();
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    core.brokerAppStatus = vi.fn(async () => ({ status: 'installed' }));
+    const waitForInstall = vi.fn(async () => ({ botToken: 'xoxb-after-approval' }));
+    core.waitForInstall = waitForInstall;
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.confirmThenOpen).toHaveBeenCalledWith(INSTALL_URL, expect.stringContaining('approve the install'));
+    expect(waitForInstall).toHaveBeenCalledWith('nct-saved', 'A0APP123', {
+      intervalMs: 5_000,
+      timeoutMs: 5 * 60_000,
+    });
+    // The bot token the approval released stands in for the one auto-install
+    // would have produced — same inputs, same owner_handle prefill.
+    expect(result).toMatchObject({
+      connection: 'provisioned',
+      bot_token: 'xoxb-after-approval',
+      app_token: 'xapp-test',
+      owner_handle: 'U0OWNER12',
+    });
+    // No hand-finish instructions: there is nothing left to paste.
+    expect(state.notes.map((n) => n.title)).not.toContain('Finish installing in Slack');
+    expect(state.warns).toEqual([]);
+  });
+
+  it('walks the manual path when the approval has not landed, keeping the app it already made', async () => {
+    refusedApp();
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    core.brokerAppStatus = vi.fn(async () => ({ status: 'pending_install' }));
+    core.waitForInstall = vi.fn(async () => null);
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    // The app token still comes back, so the skill's bot_token prompt is the
+    // only thing left — provisioning is not repeated.
+    expect(result).toMatchObject({ connection: 'provisioned', app_token: 'xapp-test' });
+    expect(result).not.toHaveProperty('bot_token');
+    expect(state.warns.at(-1)).toContain('Approvals often take longer');
+    expect(state.warns.at(-1)).toContain('nothing needs creating again');
+    const finish = state.notes.at(-1)!;
+    expect(finish.title).toBe('Finish installing in Slack');
+    expect(finish.message).toContain(INSTALL_URL);
+  });
+
+  it('an installed core that predates the status read degrades with one warning line', async () => {
+    refusedApp();
+    const root = track(rootWithModule());
+    // fakeCore() carries neither helper — exactly what an older add-slack
+    // payload ships.
+    const core = fakeCore();
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.confirmThenOpen).not.toHaveBeenCalled();
+    expect(state.warns).toEqual([
+      "This copy's Slack provisioning module can't finish the install for you — doing it by hand instead.",
+    ]);
+    expect(result).toMatchObject({ connection: 'provisioned', app_token: 'xapp-test' });
+    expect(state.notes.at(-1)?.title).toBe('Finish installing in Slack');
+  });
+
+  it('a credential the service refuses ends the wait rather than looking like a slow approval', async () => {
+    refusedApp();
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    core.brokerAppStatus = vi.fn(async () => ({ status: 'pending_install' }));
+    core.waitForInstall = vi.fn(async () => {
+      throw new FakeBrokerHttpError(401, '/v1/apps/A0APP123');
+    });
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(state.warns.at(-1)).toBe('The service said: HTTP 401.');
+    expect(result).toMatchObject({ connection: 'provisioned', app_token: 'xapp-test' });
+    expect(state.notes.at(-1)?.title).toBe('Finish installing in Slack');
+  });
+
+  it('the manager-token path never tries to finish an install it has no credential for', async () => {
+    const root = track(rootWithModule());
+    const core = fakeCore();
+    core.readManagerToken = vi.fn(() => 'xoxp-mgr');
+    core.brokerAppStatus = vi.fn(async () => ({ status: 'installed', bot_token: 'xoxb-nope' }));
+    const waitForInstall = vi.fn(async () => ({ botToken: 'xoxb-nope' }));
+    core.waitForInstall = waitForInstall;
+    core.provisionManagedApp = vi.fn(async () => ({
+      appId: 'A0APP123',
+      appToken: 'xapp-test',
+      installUrl: INSTALL_URL,
+      installError: 'app_approval_request_eligible',
+    }));
+
+    const result = await maybeAutoProvisionSlack('Trusty', { root, importModule: async () => core });
+
+    expect(waitForInstall).not.toHaveBeenCalled();
+    expect(state.confirmThenOpen).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ connection: 'provisioned', app_token: 'xapp-test' });
+    expect(result).not.toHaveProperty('bot_token');
   });
 });
