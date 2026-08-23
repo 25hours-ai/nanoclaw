@@ -122,13 +122,13 @@ bash setup/lib/restart.sh
 ## Pair your chat
 
 Telegram tokens carry no user binding, so the agent proves you own the chat with
-a one-time pairing handshake: it issues a 4-digit code, you send those exact 4
+a one-time pairing handshake: it issues a 6-digit code, you send those exact 6
 digits to the bot from the chat you want to register, and the live adapter
 matches them. Open the bot first so you're on the right screen when the code
 appears. Tell the user:
 
 ```nc:operator
-Open @{{bot_username}} (https://telegram.me/{{bot_username}}) in Telegram now and keep it on screen — a 4-digit pairing code is about to appear in this terminal. When it does, send just those 4 digits to the bot as a message (in a group chat with Group Privacy on, prefix them with @{{bot_username}}). A wrong guess is rejected and a fresh code is issued automatically.
+Open @{{bot_username}} (https://telegram.me/{{bot_username}}) in Telegram now and keep it on screen — a 6-digit pairing code is about to appear in this terminal. When it does, send just those 6 digits to the bot as a message (in a group chat with Group Privacy on, prefix them with @{{bot_username}}). A wrong guess is rejected and a fresh code is issued automatically.
 ```
 
 Run the pairing handshake. It prints the code, streams "waiting…" and wrong-code
@@ -190,7 +190,7 @@ the group and keeps the approval card in the loop.
 
 **`getMe` fails.** The token was revoked (a `/revoke` or a fresh `/token` invalidates the old value) or picked up whitespace in the paste. Get the current token from BotFather and re-paste it.
 
-**Pairing never completes.** The live adapter is what observes the code, so the service must be running — the restart step comes before pairing for exactly this reason. Send *just* the 4 digits from the exact chat you want registered; in a group with Group Privacy on, prefix them with `@<botname>`. Wrong guesses are fine (a fresh code is issued, up to 5 times), but a dead adapter waits forever.
+**Pairing never completes.** The live adapter is what observes the code, so the service must be running — the restart step comes before pairing for exactly this reason. Send *just* the 6 digits from the exact chat you want registered; in a group with Group Privacy on, prefix them with `@<botname>`. Wrong guesses are fine (a fresh code is issued, up to 5 times), but a dead adapter waits forever.
 
 **The bot ignores group messages.** Group Privacy is on, so the bot only sees addressed commands and replies, not ordinary `@bot` text. BotFather → `/mybots` → your bot → Bot Settings → Group Privacy → Turn off — then remove and re-add the bot to the group so the change takes effect.
 

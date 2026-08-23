@@ -48,7 +48,7 @@ describe('gatePolicy — §5.1 parity table (real skills)', () => {
   it('telegram: the pairing operator gains a readiness pause before the effect:step', () => {
     const d = decisions(loadSkill('telegram'));
     expect(d.map((g) => g.needsConfirm)).toEqual([false, true]); // BotFather → prompt; pairing → step
-    expect(d[1].flavor).toBe('readiness'); // "a 4-digit code is about to appear"
+    expect(d[1].flavor).toBe('readiness'); // "a 6-digit code is about to appear"
   });
 
   it('signal: readiness pause before the QR device-link step', () => {
