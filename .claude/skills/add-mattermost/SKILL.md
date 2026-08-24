@@ -39,7 +39,25 @@ data, so show what will be created and get approval first.
 
 ## Apply
 
-### 1. Copy and register the channel
+### 1. Detect the server
+
+Probe a configured URL and the conventional local endpoints. The detector
+always returns structured output: `found` binds `base_url`; `none` leaves it
+for the guarded prompt below.
+
+```nc:run capture:discovery=.discovery,base_url=.base_url effect:fetch
+node .claude/skills/add-mattermost/scripts/discover-server.mjs
+```
+
+```nc:operator when:discovery=none
+No healthy configured or local Mattermost server was detected. If you have a remote server, provide its URL next. Otherwise install the local evaluation server by following LOCAL_SERVER.md, then provide http://localhost:8065.
+```
+
+```nc:prompt base_url when:discovery=none normalize:rstrip-slash validate:^https?://[A-Za-z0-9._~:%/?#\[\]@!&()*+,;=-]+$
+Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
+```
+
+### 2. Copy and register the channel
 
 Copy the canonical adapter and registration test from the `channels` branch.
 
@@ -67,7 +85,7 @@ Install NanoCo's audited adapter at the exact supported version.
 @nanoco/chat-adapter-mattermost@0.1.0
 ```
 
-### 2. Create and authenticate the bot
+### 3. Create and authenticate the bot
 
 Tell the operator:
 
@@ -77,12 +95,6 @@ Create a dedicated Mattermost bot:
 2. Create a bot such as `nanoclaw`, then copy the access token shown after creation.
 3. Add the bot to every team and channel where it should receive messages. Bots do not join channels automatically.
 4. Keep the token private. If it is lost, create a new token and deactivate the obsolete one after replacement.
-```
-
-Collect the server URL without a trailing slash and the bot token.
-
-```nc:prompt base_url normalize:rstrip-slash validate:^https?://.+
-Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
 ```
 
 ```nc:prompt bot_token secret normalize:trim validate:^[A-Za-z0-9_-]{20,}$
@@ -96,7 +108,7 @@ token, or bot-account status is wrong.
 curl -sf "{{base_url}}/api/v4/users/me" -H "Authorization: Bearer {{bot_token}}"
 ```
 
-### 3. Configure authenticated card callbacks
+### 4. Configure authenticated card callbacks
 
 Approvals require Mattermost itself—not the browser—to reach NanoClaw. Ask for
 a URL routable from the Mattermost server. It may be NanoClaw's base URL or the
@@ -128,7 +140,7 @@ Tell the operator:
 From the Mattermost server, verify the callback host is reachable. For a private host or Docker bridge name, add that hostname or IP under System Console → Environment → Developer → Allow untrusted internal connections. Use a publicly trusted HTTPS certificate in production.
 ```
 
-### 4. Resolve the owner's DM
+### 5. Resolve the owner's DM
 
 Ask for the Mattermost username that will own this NanoClaw installation.
 
@@ -149,7 +161,7 @@ curl -sf -X POST "{{base_url}}/api/v4/channels/direct" -H "Authorization: Bearer
 The resolved `platform_id` and `owner_username` are used by
 `/init-first-agent`. If an owner exists, use `/manage-channels` instead.
 
-### 5. Build, test, and restart
+### 6. Build, test, and restart
 
 Build the composed host to guard the typed Chat SDK bridge call and dependency.
 

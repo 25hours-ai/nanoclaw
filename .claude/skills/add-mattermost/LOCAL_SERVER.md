@@ -36,8 +36,13 @@ configuration changes remain reproducible:
 ```bash
 mkdir -p .nanoclaw/mattermost
 cp .claude/skills/add-mattermost/assets/compose.yml .nanoclaw/mattermost/compose.yml
+umask 077
+test -f .nanoclaw/mattermost/.env || printf 'MATTERMOST_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .nanoclaw/mattermost/.env
 docker compose -f .nanoclaw/mattermost/compose.yml up -d
 ```
+
+The generated database credential is local to this evaluation stack and is
+stored mode-private beside its Compose file. Do not commit that `.env` file.
 
 Wait for `http://localhost:8065/api/v4/system/ping` to become healthy. Stop
 after a bounded wait and report container logs on failure; do not loop forever.
