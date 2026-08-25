@@ -14,8 +14,9 @@ async function configuredUrl() {
       const match = line.match(/^\s*MATTERMOST_BASE_URL\s*=\s*(.*?)\s*$/);
       if (match?.[1]) return normalize(match[1].replace(/^(['"])(.*)\1$/, '$2'));
     }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
+  } catch {
+    // Any .env read failure means no configured URL; discovery must still
+    // resolve so the operator fallback prompt is offered.
   }
   return '';
 }
@@ -31,15 +32,19 @@ async function isMattermost(baseUrl) {
   }
 }
 
-const candidates = [...new Set([await configuredUrl(), 'http://localhost:8065', 'http://127.0.0.1:8065'])].filter(
-  Boolean,
-);
+try {
+  const candidates = [...new Set([await configuredUrl(), 'http://localhost:8065', 'http://127.0.0.1:8065'])].filter(
+    Boolean,
+  );
 
-for (const baseUrl of candidates) {
-  if (await isMattermost(baseUrl)) {
-    process.stdout.write(`${JSON.stringify({ discovery: 'found', base_url: baseUrl })}\n`);
-    process.exit(0);
+  for (const baseUrl of candidates) {
+    if (await isMattermost(baseUrl)) {
+      process.stdout.write(`${JSON.stringify({ discovery: 'found', base_url: baseUrl })}\n`);
+      process.exit(0);
+    }
   }
+} catch {
+  // Fall through to the not-found result below.
 }
 
 process.stdout.write(`${JSON.stringify({ discovery: 'none', base_url: '' })}\n`);

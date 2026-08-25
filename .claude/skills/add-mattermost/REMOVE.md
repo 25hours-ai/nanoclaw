@@ -21,7 +21,14 @@ Remove `MATTERMOST_BASE_URL`, `MATTERMOST_BOT_TOKEN`,
 
 ## 4. Remove direct dependencies
 
-If no other locally installed channel imports `ws`, remove the dependencies:
+Check whether any remaining channel still imports `ws`:
+
+```bash
+grep -rl "require('ws')\|from 'ws'" src/channels
+```
+
+The adapter removed in step 2 was the only trunk consumer, so if the grep
+matches nothing, remove the dependencies:
 
 ```bash
 pnpm uninstall ws @types/ws
@@ -30,8 +37,15 @@ pnpm uninstall ws @types/ws
 ## 5. Optional local server
 
 The evaluation server is deliberately not removed automatically because its
-volumes contain Mattermost data. If it was created only for NanoClaw and the
-data is no longer needed, follow the teardown instructions in `LOCAL_SERVER.md`.
+volumes contain Mattermost data. Stopping it keeps that data:
+
+```bash
+docker compose -f .nanoclaw/mattermost/compose.yml down
+```
+
+Only when the operator explicitly confirms the Mattermost database and uploads
+should be erased, add `-v` to that command to delete the volumes as well. Also
+delete `.nanoclaw/mattermost/` afterwards if the stack is gone for good.
 
 ## 6. Rebuild and restart
 

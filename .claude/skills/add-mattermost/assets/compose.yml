@@ -31,7 +31,9 @@ services:
       MM_SERVICESETTINGS_ALLOWCORSFROM: "http://localhost:8065 http://127.0.0.1:8065"
       MM_SERVICESETTINGS_ENABLEBOTACCOUNTCREATION: "true"
       MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
-      MM_TEAMSETTINGS_ENABLEOPENSERVER: "true"
+      # Open signup stays off: the first browser visit still creates the
+      # System Admin, and further accounts are invited from the System Console.
+      MM_TEAMSETTINGS_ENABLEOPENSERVER: "false"
       MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS: "host.docker.internal"
     volumes:
       - data:/mattermost/data

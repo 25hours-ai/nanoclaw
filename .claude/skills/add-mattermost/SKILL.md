@@ -79,8 +79,11 @@ Append the channel's single reach-in to the barrel, skipping it if present.
 import './mattermost.js';
 ```
 
-Remove the conflicting unscoped adapter when it is installed. The channel uses
-the audited implementation copied from the `channels` branch.
+Remove the unscoped `chat-adapter-mattermost` package when it is installed.
+Nothing in this repository imports it: it is typosquat-shaped against the
+scoped `@chat-adapter` family, so any copy in `package.json` is stale or
+mistaken and would sit beside the audited implementation copied from the
+`channels` branch.
 
 ```nc:run
 if node -e "const p=require('./package.json'); process.exit(p.dependencies?.['chat-adapter-mattermost'] ? 0 : 1)"; then pnpm remove chat-adapter-mattermost; fi

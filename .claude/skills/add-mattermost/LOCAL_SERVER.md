@@ -58,8 +58,11 @@ Desktop does not silently stop receiving live events if it normalizes the
 hostname. It also enables bot account creation and permits callbacks only to
 the Docker host name needed by a locally running NanoClaw.
 
-The first browser visit creates the administrator and team. Continue with the
-bot-account steps in `SKILL.md` after that initialization is complete.
+The first browser visit creates the administrator and team; Mattermost always
+allows creating the first account even with open signup disabled. The template
+keeps open signup off, so anyone else who reaches the listener cannot
+self-register — add further users through System Console invitations. Continue
+with the bot-account steps in `SKILL.md` after that initialization is complete.
 
 ## Verification
 
