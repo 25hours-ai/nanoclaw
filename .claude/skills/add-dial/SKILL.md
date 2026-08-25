@@ -388,7 +388,7 @@ nested step's stdout is a pipe, so clack cannot echo what is typed into it, and
 this skill owns the operator's terminal. List the groups, then collect the answer
 and hand it down:
 
-```nc:run capture:has_agents when:install_tool=yes effect:fetch
+```nc:run capture:has_agents validate:^(yes|no)$ when:install_tool=yes effect:fetch
 ncl groups list --json | jq -r 'if (.data|length)==0 then "no" else "yes" end'
 ```
 ```nc:operator when:has_agents=no
