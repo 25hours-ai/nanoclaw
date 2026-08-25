@@ -111,6 +111,8 @@ interface ActiveSessionRuntime {
   stopReason?: string;
   /** Incarnation this process shadow-claimed in session_claims, if the write landed. */
   claimIncarnation?: number;
+  /** A deferred fenced finalization is already queued for this runtime. */
+  deferredFinishScheduled?: boolean;
 }
 
 const activeContainers = new Map<string, ActiveSessionRuntime>();
@@ -195,6 +197,52 @@ export function getContainerStartedAtMs(sessionId: string): number | undefined {
 }
 
 /**
+ * Sessions whose running container could not be claim-fenced at adoption (the
+ * store was unreachable). They are deliberately NOT in the registry — nothing
+ * supervises them yet — but they are alive, so the wake path must reclaim them
+ * instead of spawning a duplicate. Cleared on a successful retry, on
+ * discovering the container gone, or on losing the claim to another live host.
+ */
+const pendingAdoptions = new Set<string>();
+
+export function _resetAdoptionRetryStateForTesting(): void {
+  pendingAdoptions.clear();
+}
+
+/**
+ * Retry the claim-fenced adoption of a container that survived a failed claim
+ * write. Re-lists from the driver (fresher truth than any cached handle):
+ * container gone → false, a fresh spawn is correct; claim lost to a live
+ * host → throws, no spawn either; store still down → throws, wake retries.
+ */
+async function retryPendingAdoption(session: Session): Promise<boolean> {
+  const driver = getSessionDriver();
+  const snapshots = await driver.listSessions(INSTALL_SLUG);
+  const snapshot = snapshots.find(({ handle, phase }) => handle.key.sessionId === session.id && phase === 'running');
+  if (!snapshot) {
+    pendingAdoptions.delete(session.id);
+    return false;
+  }
+  const claimIncarnation = await claimSessionRun(session.id, snapshot.handle.name);
+  if (claimIncarnation === null) {
+    pendingAdoptions.delete(session.id);
+    throw new Error(
+      `session ${session.id} is claimed by another live host process — not adopting or spawning a duplicate`,
+    );
+  }
+  const runtime = registerRuntime(session.id, snapshot.handle, snapshot.handle.name, true);
+  runtime.claimIncarnation = claimIncarnation;
+  runtime.stopReason = undefined;
+  snapshot.handle.onTerminal((failure) => {
+    void finishAndResolve(session.id, runtime, failure);
+  });
+  await markContainerRunning(session.id);
+  pendingAdoptions.delete(session.id);
+  log.info('Adopted surviving container on retry after a failed claim write', { sessionId: session.id });
+  return true;
+}
+
+/**
  * Wake up a container for a session. If already running or mid-spawn, no-op
  * (the in-flight wake promise is reused).
  *
@@ -227,6 +275,12 @@ export function wakeContainer(session: Session): Promise<boolean> {
 }
 
 async function spawnContainer(session: Session): Promise<void> {
+  if (pendingAdoptions.has(session.id)) {
+    // A running container is waiting to be re-fenced after a failed adoption
+    // claim. Reclaim it rather than spawning a duplicate; its poll loop picks
+    // up any pending mail the moment it is ours again.
+    if (await retryPendingAdoption(session)) return;
+  }
   const agentGroup = await getAgentGroup(session.agent_group_id);
   if (!agentGroup) {
     log.error('Agent group not found', { agentGroupId: session.agent_group_id });
@@ -412,6 +466,31 @@ async function finishAndResolve(sessionId: string, runtime: ActiveSessionRuntime
   }
 }
 
+// Fence-read schedule: brief in-line retries (~30s), then the whole
+// finalization defers to the resync cadence. A store outage never forces a
+// choice between clobbering a newer incarnation and leaking the runtime.
+let fenceRetryDelaysMs = [5_000, 10_000, 15_000];
+let deferredFinishDelayMs = 60_000;
+export function _setFinishFenceScheduleForTesting(retryDelaysMs?: number[], deferDelayMs?: number): void {
+  fenceRetryDelaysMs = retryDelaysMs ?? [5_000, 10_000, 15_000];
+  deferredFinishDelayMs = deferDelayMs ?? 60_000;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
+
+/** Re-run finalization once the store may be back. One timer per runtime. */
+function scheduleDeferredFinish(sessionId: string, runtime: ActiveSessionRuntime, failure?: SessionFailure): void {
+  if (runtime.deferredFinishScheduled) return;
+  runtime.deferredFinishScheduled = true;
+  const timer = setTimeout(() => {
+    runtime.deferredFinishScheduled = false;
+    finish(sessionId, runtime, failure).catch((err: unknown) => {
+      log.error('Deferred finalization failed', { sessionId, err });
+    });
+  }, deferredFinishDelayMs);
+  timer.unref?.();
+}
+
 async function finish(sessionId: string, runtime: ActiveSessionRuntime, failure?: SessionFailure): Promise<void> {
   const { containerName } = runtime;
 
@@ -421,15 +500,35 @@ async function finish(sessionId: string, runtime: ActiveSessionRuntime, failure?
   // write, the exit callbacks, the claim release are all skipped; only this
   // runtime's own registry entry is dropped).
   if (runtime.claimIncarnation !== undefined) {
-    let fenced = false;
-    /* eslint-disable no-catch-all/no-catch-all -- an unreadable fence must not leak the runtime forever; proceed with finalization */
-    try {
-      const claim = await getSessionClaim(sessionId);
-      fenced = claim !== undefined && claim.incarnation !== runtime.claimIncarnation;
-    } catch (err) {
-      log.warn('Claim fence check failed — proceeding with finalization', { sessionId, err });
+    let fenced: boolean | 'unreadable' = 'unreadable';
+    /* eslint-disable no-catch-all/no-catch-all -- an unreadable fence defers finalization; it never licenses unfenced writes */
+    for (let attempt = 0; attempt <= fenceRetryDelaysMs.length; attempt++) {
+      if (attempt > 0) await sleep(fenceRetryDelaysMs[attempt - 1]);
+      try {
+        const claim = await getSessionClaim(sessionId);
+        fenced = claim !== undefined && claim.incarnation !== runtime.claimIncarnation;
+        break;
+      } catch (err) {
+        log.warn('Claim fence check failed', { sessionId, attempt: attempt + 1, err });
+      }
     }
     /* eslint-enable no-catch-all/no-catch-all */
+    if (fenced === 'unreadable') {
+      // Fail closed: no status write, no claim release, no exit callbacks —
+      // none of it may happen unfenced. The registry entry stays, so wakes
+      // see the session as occupied and nothing double-spawns; an unref'd
+      // timer re-runs finalization at the resync cadence until the store
+      // answers. Exit callbacks are deferred, not dropped — and a pending
+      // respawn is carried by its durable stop-intent row even if this
+      // process dies first.
+      log.warn('Claim fence unreadable — deferring finalization until the store answers', {
+        sessionId,
+        containerName,
+        incarnation: runtime.claimIncarnation,
+      });
+      scheduleDeferredFinish(sessionId, runtime, failure);
+      return;
+    }
     if (fenced) {
       log.warn('Ignoring stale session finish — a newer incarnation holds the claim', {
         sessionId,
@@ -538,21 +637,29 @@ export async function adoptRunningSessions(): Promise<{ adopted: number; stopped
     }
     // Claim before adopting: a lost CAS means another live process already
     // owns this session — leave its container strictly alone. A failed claim
-    // WRITE degrades to unfenced adoption (refusing to adopt over a transient
-    // write failure would orphan a healthy session).
-    let claimIncarnation: number | null | undefined;
-    /* eslint-disable no-catch-all/no-catch-all -- degrade to unfenced adoption rather than orphan a healthy session */
+    // WRITE also fails closed: an unfenced adoption could stomp a newer
+    // claimant's session, while an unadopted-but-running container is safe to
+    // leave — the spawn path is claim-first fail-closed too, so nothing can
+    // start a duplicate while the store is down, and the wake path reclaims
+    // the container (`retryPendingAdoption`) once the store answers.
+    let claimIncarnation: number | null;
+    /* eslint-disable no-catch-all/no-catch-all -- fail closed: leave the container unadopted and let the wake path retry, never adopt unfenced */
     try {
       claimIncarnation = await claimSessionRun(session.id, handle.name);
     } catch (err) {
-      log.error('Session claim write failed during adoption — adopting unfenced', { sessionId: session.id, err });
-      claimIncarnation = undefined;
+      log.error('Session claim write failed during adoption — leaving the container unadopted for retry', {
+        sessionId: session.id,
+        err,
+      });
+      pendingAdoptions.add(session.id);
+      continue;
     }
     /* eslint-enable no-catch-all/no-catch-all */
     if (claimIncarnation === null) {
       log.warn('Session adoption skipped — another live host process holds the claim', { sessionId: session.id });
       continue;
     }
+    pendingAdoptions.delete(session.id);
     const runtime = registerRuntime(session.id, handle, handle.name, true);
     runtime.claimIncarnation = claimIncarnation;
     runtime.stopReason = undefined;
@@ -600,6 +707,13 @@ export async function honorPendingStopIntents(
   }
   for (const intent of intents) {
     if (intent.stop_intent !== 'respawn_after_stop') continue;
+    if (pendingAdoptions.has(intent.session_id)) {
+      // The session's container is alive but not yet re-fenced; acting on the
+      // intent now could kill or respawn the wrong incarnation. The row stays
+      // for the next recovery pass.
+      log.warn('Deferring stop intent — session awaits claim-fenced adoption', { sessionId: intent.session_id });
+      continue;
+    }
     const session = await getSession(intent.session_id);
     if (!session || session.status !== 'active') {
       await shadowWrite('stop-intent-clear', () => setStopIntent(intent.session_id, null, new Date().toISOString()));

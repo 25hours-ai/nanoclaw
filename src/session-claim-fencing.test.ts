@@ -17,7 +17,15 @@ vi.mock('./drivers/index.js', () => ({
   isSessionEventsDriver: () => false,
 }));
 
-import { adoptRunningSessions, honorPendingStopIntents, isContainerRunning, killContainer } from './container-runner.js';
+import {
+  _resetAdoptionRetryStateForTesting,
+  _setFinishFenceScheduleForTesting,
+  adoptRunningSessions,
+  honorPendingStopIntents,
+  isContainerRunning,
+  killContainer,
+  wakeContainer,
+} from './container-runner.js';
 import { getSessionClaim, setStopIntent, tryClaimSession } from './db/coordination.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createSession, getSession } from './db/index.js';
 import type { Session } from './types.js';
@@ -75,6 +83,8 @@ async function seedSession(id = 'sess-1'): Promise<void> {
 
 beforeEach(async () => {
   snapshots.length = 0;
+  _resetAdoptionRetryStateForTesting();
+  _setFinishFenceScheduleForTesting();
   const db = await initTestDb();
   await runMigrations(db);
   await createAgentGroup({
@@ -224,5 +234,96 @@ describe('durable respawn intent', () => {
     await honorPendingStopIntents(wake);
     expect(wake).not.toHaveBeenCalled();
     expect((await getSessionClaim('sess-closed'))?.stop_intent).toBeNull();
+  });
+});
+
+describe('fail-closed adoption', () => {
+  it('a claim write failure leaves the container unadopted and untouched; the wake path reclaims it', async () => {
+    const coordination = await import('./db/coordination.js');
+    const casSpy = vi.spyOn(coordination, 'tryClaimSession').mockRejectedValueOnce(new Error('store down'));
+
+    const controls = fakeHandle('sess-1', 'container-alive');
+    snapshots.push({ handle: controls.handle, phase: 'running' } as SupervisedSnapshot);
+
+    const { adopted, stopped } = await adoptRunningSessions();
+    expect(adopted).toBe(0);
+    expect(stopped).toBe(0);
+    // Untouched: no registry entry, no stop, no unfenced claim.
+    expect(isContainerRunning('sess-1')).toBe(false);
+    expect(controls.stopped).toHaveLength(0);
+    expect(await getSessionClaim('sess-1')).toBeUndefined();
+
+    // Store is back: the wake path reclaims the surviving container instead of
+    // spawning a duplicate — and the adoption is fenced this time.
+    const woke = await wakeContainer((await getSession('sess-1'))!);
+    expect(woke).toBe(true);
+    expect(isContainerRunning('sess-1')).toBe(true);
+    const claim = await getSessionClaim('sess-1');
+    expect(claim?.incarnation).toBe(1);
+    casSpy.mockRestore();
+  });
+
+  it('the wake path spawns nothing while the store is still down', async () => {
+    const coordination = await import('./db/coordination.js');
+    const casSpy = vi.spyOn(coordination, 'tryClaimSession').mockRejectedValue(new Error('store down'));
+
+    const controls = fakeHandle('sess-1', 'container-alive');
+    snapshots.push({ handle: controls.handle, phase: 'running' } as SupervisedSnapshot);
+    await adoptRunningSessions();
+
+    const woke = await wakeContainer((await getSession('sess-1'))!);
+    expect(woke).toBe(false);
+    expect(isContainerRunning('sess-1')).toBe(false);
+    expect(controls.stopped).toHaveLength(0);
+    casSpy.mockRestore();
+  });
+
+  it('a pending stop intent is deferred while the session awaits fenced adoption', async () => {
+    await setStopIntent('sess-1', 'respawn_after_stop', now());
+    const coordination = await import('./db/coordination.js');
+    const casSpy = vi.spyOn(coordination, 'tryClaimSession').mockRejectedValueOnce(new Error('store down'));
+    const controls = fakeHandle('sess-1', 'container-alive');
+    snapshots.push({ handle: controls.handle, phase: 'running' } as SupervisedSnapshot);
+    await adoptRunningSessions();
+    casSpy.mockRestore();
+
+    const wake = vi.fn().mockResolvedValue(true);
+    await honorPendingStopIntents(wake);
+    expect(wake).not.toHaveBeenCalled();
+    // The intent row survives for the pass that runs after fenced adoption.
+    expect((await getSessionClaim('sess-1'))?.stop_intent).toBe('respawn_after_stop');
+  });
+});
+
+describe('fail-closed finish', () => {
+  it('an unreadable fence defers finalization — zero writes — then finishes fenced when the store answers', async () => {
+    _setFinishFenceScheduleForTesting([], 250);
+
+    const controls = fakeHandle('sess-1', 'container-adopted');
+    snapshots.push({ handle: controls.handle, phase: 'running' } as SupervisedSnapshot);
+    await adoptRunningSessions();
+    expect(isContainerRunning('sess-1')).toBe(true);
+
+    const coordination = await import('./db/coordination.js');
+    const fenceSpy = vi.spyOn(coordination, 'getSessionClaim').mockRejectedValueOnce(new Error('store down'));
+    controls.fireTerminal();
+    await vi.waitFor(() => expect(fenceSpy).toHaveBeenCalled());
+
+    // Fail closed while the store is down: still registered, status untouched,
+    // claim intact — no durable write happened unfenced.
+    expect(isContainerRunning('sess-1')).toBe(true);
+    expect((await getSession('sess-1'))?.container_status).toBe('running');
+    expect((await getSessionClaim('sess-1'))?.claimed_by).not.toBeNull();
+
+    // The deferred pass finds the store healthy and finalizes, fenced.
+    await vi.waitFor(
+      () => {
+        expect(isContainerRunning('sess-1')).toBe(false);
+      },
+      { timeout: 3_000 },
+    );
+    expect((await getSession('sess-1'))?.container_status).toBe('stopped');
+    expect((await getSessionClaim('sess-1'))?.claimed_by).toBeNull();
+    fenceSpy.mockRestore();
   });
 });
