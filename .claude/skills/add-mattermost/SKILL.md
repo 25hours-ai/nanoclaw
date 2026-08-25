@@ -64,6 +64,13 @@ Copy the canonical adapter and registration test from the `channels` branch.
 ```nc:copy from-branch:channels
 src/channels/mattermost.ts
 src/channels/mattermost-registration.test.ts
+src/channels/mattermost-adapter/adapter.ts
+src/channels/mattermost-adapter/format.ts
+src/channels/mattermost-adapter/index.ts
+src/channels/mattermost-adapter/rest.ts
+src/channels/mattermost-adapter/thread-id.ts
+src/channels/mattermost-adapter/types.ts
+src/channels/mattermost-adapter/websocket.ts
 ```
 
 Append the channel's single reach-in to the barrel, skipping it if present.
@@ -73,16 +80,18 @@ import './mattermost.js';
 ```
 
 Remove the conflicting unscoped adapter when it is installed. The channel uses
-only NanoCo's scoped package.
+the audited implementation copied from the `channels` branch.
 
 ```nc:run
 if node -e "const p=require('./package.json'); process.exit(p.dependencies?.['chat-adapter-mattermost'] ? 0 : 1)"; then pnpm remove chat-adapter-mattermost; fi
 ```
 
-Install NanoCo's audited adapter at the exact supported version.
+Install the vendored adapter's direct WebSocket dependencies at the exact
+supported versions.
 
 ```nc:dep
-@nanoco/chat-adapter-mattermost@0.1.0
+ws@8.21.3
+@types/ws@8.18.1
 ```
 
 ### 3. Create and authenticate the bot
