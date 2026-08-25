@@ -118,7 +118,7 @@ These variables are read **on the host** and passed into the container only when
 - `OPENCODE_MODEL_OUTPUT_LIMIT` — optional max output tokens for the same main model, only applied alongside a valid context limit (without one it is logged and ignored). Anything but a positive integer is logged and treated as unset.
 - `OPENCODE_MODEL_INPUT_MODALITIES` — optional comma-separated subset of `text,audio,image,video,pdf`, declared for **`OPENCODE_MODEL` only**. OpenCode drops any file part whose modality the model does not declare, so images and PDFs never reach a registry-unknown custom model unless this is set. Unrecognized entries are logged and skipped; unset declares nothing and leaves behavior unchanged. A distinct `OPENCODE_SMALL_MODEL` never inherits this; it keeps the undeclared-model default regardless.
 
-  Declaring the modality only opens OpenCode's gate for the file part to reach the model call. It does not by itself mean an attachment arrives as media today: the runner produces a file part from a channel attachment only once the attachment plumbing lands on `main` ([nanoclaw#3156](https://github.com/nanocoai/nanoclaw/issues/3156)). Until then, attachments are still described in the prompt text the formatter renders, same as every other provider.
+  Declaring the modality only opens OpenCode's gate. NanoClaw must also pass channel attachments to the provider as structured file parts; until that support is available, attachments remain prompt text.
 
 Credentials: register provider API keys in OneCLI with the matching `--host-pattern` (e.g. `api.deepseek.com`, `openrouter.ai`). OneCLI injects them via `HTTPS_PROXY` in the container — the key never lives in `.env` or the container environment.
 
