@@ -73,3 +73,49 @@ describe('inputsFromEnv (docs/skill-engine-seam.md §6)', () => {
     }
   });
 });
+
+// A question is prose the operator reads, so it renders {{vars}} exactly as an
+// operator block does. That is what lets wording two skills must ask identically
+// live in ONE file, captured and referenced, instead of copied into each
+// document where the copies drift apart.
+describe('prompt questions render {{vars}}', () => {
+  it('resolves a captured var in the question instead of showing the placeholder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skill-question-'));
+    try {
+      const skillDir = join(dir, 'probe');
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, 'SKILL.md'),
+        [
+          '---',
+          'name: probe',
+          'description: probe',
+          '---',
+          '# Probe',
+          '```nc:run capture:shared effect:fetch',
+          "printf 'the one source'",
+          '```',
+          '```nc:prompt answer',
+          'Question says: {{shared}}',
+          '```',
+        ].join('\n'),
+      );
+
+      let asked = '';
+      const res = await applySkill(skillDir, dir, {
+        exec: (c) => (c.includes('printf') ? 'the one source' : undefined),
+        resolveInput: async (_v, meta) => {
+          asked = meta.question;
+          return 'ok';
+        },
+        resolveRemote: () => 'origin',
+      });
+
+      expect(asked).toBe('Question says: the one source');
+      expect(asked).not.toContain('{{');
+      expect(fullyApplied(res)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

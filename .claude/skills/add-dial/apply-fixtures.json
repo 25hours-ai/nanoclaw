@@ -41,7 +41,56 @@
       "inputs": {
         "reuse_choice": "reuse",
         "inbound_access": "public",
-        "install_tool": "yes"
+        "install_tool": "yes",
+        "dial_agents": "all"
+      },
+      "exec": [
+        {
+          "match": "(.data|length)==0",
+          "stdout": "yes"
+        },
+        {
+          "match": "join(\", \")",
+          "stdout": "ag-1787000000000-aaaaaa (Nano)"
+        },
+        {
+          "match": "package.json",
+          "stdout": "nanoclaw/2.2.0"
+        },
+        {
+          "match": "command -v dial",
+          "stdout": "/usr/local/bin/dial"
+        },
+        {
+          "match": "dial doctor",
+          "stdout": "{\"auth\":{\"signedIn\":true,\"email\":\"operator@example.com\"}}"
+        },
+        {
+          "match": "number list",
+          "stdout": "+14155550123"
+        },
+        {
+          "match": "agent-scope-warning.sh",
+          "stdout": "Agents on this install: ag-1787000000000-aaaaaa (Nano). <consent text from agent-scope-warning.sh>"
+        },
+        {
+          "match": "agent-scope-question.txt",
+          "stdout": "<question text from agent-scope-question.txt>"
+        }
+      ],
+      "stepFields": {
+        "PLATFORM_ID": "+14155550123",
+        "PAIRED_NUMBER": "+14155550199"
+      }
+    },
+    {
+      "name": "switch-account",
+      "inputs": {
+        "reuse_choice": "switch",
+        "owner_email": "other@example.com",
+        "otp": "654321",
+        "inbound_access": "owner",
+        "install_tool": "no"
       },
       "exec": [
         {
@@ -67,15 +116,17 @@
       }
     },
     {
-      "name": "switch-account",
+      "name": "signed-in-no-agent-groups",
       "inputs": {
-        "reuse_choice": "switch",
-        "owner_email": "other@example.com",
-        "otp": "654321",
-        "inbound_access": "owner",
-        "install_tool": "no"
+        "reuse_choice": "reuse",
+        "inbound_access": "public",
+        "install_tool": "yes"
       },
       "exec": [
+        {
+          "match": "(.data|length)==0",
+          "stdout": "no"
+        },
         {
           "match": "package.json",
           "stdout": "nanoclaw/2.2.0"

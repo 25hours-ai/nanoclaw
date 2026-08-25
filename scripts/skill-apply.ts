@@ -551,8 +551,16 @@ const NORMALIZE_KINDS: ReadonlySet<string> = new Set(['trim', 'rstrip-slash', 'l
 // consumer can run its own re-ask loop against the same semantics the engine
 // enforces at bind. The attrs live on the directive fence, so they're stripped
 // along with the fence when a skill degrades to prose — invisible to the agent.
-function inputMetaOf(d: Directive, secret: boolean, validate: string | undefined): InputMeta {
-  const meta: InputMeta = { question: d.body.join('\n'), secret };
+function inputMetaOf(
+  d: Directive,
+  secret: boolean,
+  validate: string | undefined,
+  vars: Map<string, { value: string; secret: boolean }>,
+): InputMeta {
+  // The question renders {{vars}} like an operator block does, so wording an
+  // earlier capture resolved (shared prose two skills must ask identically) can
+  // be asked from one source instead of copied into each document.
+  const meta: InputMeta = { question: substitute(d.body.join('\n'), vars), secret };
   if (validate !== undefined) meta.validate = validate;
   if (typeof d.attrs.flags === 'string') meta.flags = d.attrs.flags;
   if (typeof d.attrs.normalize === 'string' && NORMALIZE_KINDS.has(d.attrs.normalize)) {
@@ -895,7 +903,7 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
         // path (validation below rejects it loudly instead). Otherwise resolve
         // via `resolveInput`; still undefined ⇒ defer (headless, no answer).
         let val = opts.inputs?.[v];
-        if (val === undefined) val = await opts.resolveInput?.(v, inputMetaOf(d, secret, validate));
+        if (val === undefined) val = await opts.resolveInput?.(v, inputMetaOf(d, secret, validate, vars));
         if (val === undefined) {
           res.deferred.push(v);
           continue;
