@@ -19,7 +19,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import { sanitizeStoredMcpServers } from './container-config.js';
+import { parseSkillSelection, sanitizeStoredMcpServers } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { readGroupPersona } from './group-persona.js';
 import { log } from './log.js';
@@ -167,29 +167,6 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
   const content =
     spec.maxBytes === undefined ? render(sections) : fitToCap(sections, spec.maxBytes, spec.fileName, group.name);
   writeAtomic(path.join(groupDir, spec.fileName), content);
-}
-
-/**
- * `'all'`, or the names the group selected. Anything else is treated as `'all'`:
- * a bare string would otherwise turn an `includes` filter into a substring
- * match and silently drop skills.
- *
- * Exported so the composer and `selectedSkillNames` read the column through one
- * parse. Two readings that must agree, plus a comment asserting they do, is how
- * the document ends up teaching a skill the agent was never given.
- */
-export function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
-  if (raw === undefined) return 'all';
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = undefined;
-  }
-  if (parsed === 'all') return 'all';
-  if (Array.isArray(parsed) && parsed.every((n) => typeof n === 'string')) return parsed;
-  log.warn('Stored skill selection is not "all" or a string list; inlining every skill', { group: groupName });
-  return 'all';
 }
 
 function block(section: ProjectDocSection): string {

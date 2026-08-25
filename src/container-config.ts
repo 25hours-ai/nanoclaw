@@ -327,6 +327,29 @@ function parseRuntimeTier(raw: string | null | undefined, groupName: string): 'c
   throw new Error(`agent group "${groupName}" has invalid runtime_tier "${raw}" — expected "container" or "vm"`);
 }
 
+/**
+ * `'all'`, or the names the group selected. Anything else is treated as `'all'`:
+ * a bare string would otherwise turn an `includes` filter into a substring
+ * match and silently drop skills.
+ *
+ * Exported so the composer and `selectedSkillNames` read the column through one
+ * parse. Two readings that must agree, plus a comment asserting they do, is how
+ * the document ends up teaching a skill the agent was never given.
+ */
+export function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
+  if (raw === undefined) return 'all';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed === 'all') return 'all';
+  if (Array.isArray(parsed) && parsed.every((n) => typeof n === 'string')) return parsed;
+  log.warn('Stored skill selection is not "all" or a string list; inlining every skill', { group: groupName });
+  return 'all';
+}
+
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
 export function configFromDb(row: ContainerConfigRow, group: AgentGroup): ContainerConfig {
   return {
