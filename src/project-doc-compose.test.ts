@@ -16,7 +16,7 @@ import {
 import { closeDb, createAgentGroup, getDb, initTestDb, runMigrations } from './db/index.js';
 import { PERSONA_PREPEND_FILE } from './group-persona.js';
 import { log } from './log.js';
-import { composeProjectDoc, type ProjectDocSpec } from './project-doc-compose.js';
+import { composeProjectDoc, DEFAULT_PROJECT_DOC, type ProjectDocSpec } from './project-doc-compose.js';
 import type { AgentGroup } from './types.js';
 
 const CLAUDE_SPEC: ProjectDocSpec = {
@@ -338,6 +338,26 @@ describe('composeProjectDoc size cap', () => {
     expect(doc).toContain('# Omitted for size');
     expect(doc).toContain('PERSONA_MARKER');
     expect(doc).toContain('# NanoClaw Runtime Contract');
+    expect(log.error).toHaveBeenCalled();
+  });
+
+  // Claude Code "loads a CLAUDE.md file of up to 4 MiB in full and skips a
+  // larger file", and over that cliff the agent gets NOTHING, silently. Red if
+  // the default spec goes back to being uncapped.
+  it('caps the default document at the size Claude Code will still load', () => {
+    expect(DEFAULT_PROJECT_DOC.maxBytes).toBe(4 * 1024 * 1024);
+  });
+
+  // fitToCap must never throw: a per-spawn throw rides wakeContainer's retry and
+  // darks the group on a 60s loop forever. Oversized-and-loud beats bricked.
+  it('writes an oversized document loudly when the core alone exceeds the cap', async () => {
+    const ag = await seed('ag-core-over', 'core-over-group');
+    writePersona(ag.folder, `P${'A'.repeat(40_000)}`); // persona is never droppable
+
+    const doc = await compose(ag, { ...CLAUDE_SPEC, maxBytes: 20 * 1024 });
+
+    expect(Buffer.byteLength(doc, 'utf-8')).toBeGreaterThan(20 * 1024);
+    expect(doc).toContain('AAAA');
     expect(log.error).toHaveBeenCalled();
   });
 

@@ -51,10 +51,21 @@ export interface ProjectDocSpec {
   maxBytes?: number;
 }
 
+/**
+ * Claude Code "loads a CLAUDE.md file of up to 4 MiB in full and skips a larger
+ * file" (code.claude.com/docs/en/memory, read 2026-08-25). Over the cliff the
+ * agent receives NO instructions at all, silently, which is the exact failure
+ * this composer was rewritten to end. The only unbounded inputs are the
+ * agent-writable persona and template-supplied MCP instructions, so the cap is
+ * unreachable in normal use; it is here so the pathological case is loud.
+ */
+const CLAUDE_PROJECT_DOC_MAX_BYTES = 4 * 1024 * 1024;
+
 /** The spec for any provider that has not declared its own agent surfaces. */
 export const DEFAULT_PROJECT_DOC: ProjectDocSpec = {
   fileName: 'CLAUDE.md',
   baseDocPath: path.join('container', 'CLAUDE.md'),
+  maxBytes: CLAUDE_PROJECT_DOC_MAX_BYTES,
 };
 
 // LOAD-BEARING: `.claude/skills/migrate-memory` classifies a staged legacy
