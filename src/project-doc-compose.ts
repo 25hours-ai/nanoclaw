@@ -16,6 +16,7 @@
  * Runs on every container start, so editing a source in the repository still
  * reaches every agent on its next spawn.
  */
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -90,7 +91,7 @@ export async function composeProjectDoc(group: AgentGroup, groupDir: string, spe
   // Re-validated rather than cast: these `instructions` strings are the only
   // stored, agent-influenced text copied verbatim into the system prompt.
   const mcpServers = sanitizeStoredMcpServers(configRow ? JSON.parse(configRow.mcp_servers) : {}, group.name);
-  const selectedSkills = configRow ? (JSON.parse(configRow.skills) as string[] | 'all') : 'all';
+  const selectedSkills = parseSkillSelection(configRow?.skills, group.name);
 
   const sections: ProjectDocSection[] = [];
   const push = (name: string, body: string, droppable = false): void => {
@@ -104,7 +105,19 @@ export async function composeProjectDoc(group: AgentGroup, groupDir: string, spe
   if (persona) push('Persona', persona);
 
   const baseDoc = path.resolve(process.cwd(), spec.baseDocPath);
-  if (fs.existsSync(baseDoc)) push(BASE_DOC_SECTION, fs.readFileSync(baseDoc, 'utf-8'));
+  if (fs.existsSync(baseDoc)) {
+    push(BASE_DOC_SECTION, fs.readFileSync(baseDoc, 'utf-8'));
+  } else {
+    // Tolerated (a partial payload install has no base document yet) but never
+    // silent: losing the runtime contract with no signal is the exact shape of
+    // the bug this composer replaced, and it is also what a wrong-cwd host
+    // looks like.
+    log.warn('Project document composed without its base document', {
+      file: spec.fileName,
+      group: group.name,
+      baseDoc,
+    });
+  }
 
   for (const extra of spec.extraSections ?? []) push(extra.name, extra.body);
 
@@ -145,6 +158,25 @@ export async function composeProjectDoc(group: AgentGroup, groupDir: string, spe
   const content =
     spec.maxBytes === undefined ? render(sections) : fitToCap(sections, spec.maxBytes, spec.fileName, group.name);
   writeAtomic(path.join(groupDir, spec.fileName), content);
+}
+
+/**
+ * `'all'`, or the names the group selected. Anything else is treated as `'all'`:
+ * a bare string would otherwise turn the `includes` filter into a substring
+ * match and silently drop skills.
+ */
+function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
+  if (raw === undefined) return 'all';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = undefined;
+  }
+  if (parsed === 'all') return 'all';
+  if (Array.isArray(parsed) && parsed.every((n) => typeof n === 'string')) return parsed;
+  log.warn('Stored skill selection is not "all" or a string list; inlining every skill', { group: groupName });
+  return 'all';
 }
 
 function block(section: ProjectDocSection): string {
@@ -220,14 +252,30 @@ function fitToCap(sections: ProjectDocSection[], maxBytes: number, fileName: str
   return content;
 }
 
+/**
+ * LOAD-BEARING, both halves. The group directory is mounted read-write at
+ * `/workspace/agent`, so the agent can create entries beside the document the
+ * host is about to write. A predictable temp name (the old `.tmp-<pid>`, and
+ * the host pid is stable for the life of the process) is therefore a path the
+ * agent can pre-plant: a symlink there redirects this write to any file the
+ * host user can reach, and a directory there fails the spawn on every retry.
+ *
+ * The random name means there is nothing to pre-plant; `wx` (O_CREAT|O_EXCL)
+ * refuses an existing path, symlink included, so a lucky guess fails closed;
+ * and the cleanup cannot throw, because a leftover temp file must never be
+ * able to dark a group. Mirrors `migrate-claude-memory-settings.ts`, which
+ * runs once at startup and so can use pid+time where this needs randomness.
+ */
 function writeAtomic(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp-${process.pid}`;
+  const tmp = `${filePath}.tmp-${randomUUID()}`;
   try {
-    fs.writeFileSync(tmp, content);
+    fs.writeFileSync(tmp, content, { flag: 'wx' });
     fs.renameSync(tmp, filePath);
   } finally {
-    // The group directory is the agent's read-write working directory; a failed
-    // rename must not leave a `CLAUDE.md.tmp-<pid>` sitting next to the real one.
-    fs.rmSync(tmp, { force: true });
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // The rename consumed the temp file, or creation failed before it existed.
+    }
   }
 }

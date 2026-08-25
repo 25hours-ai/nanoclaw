@@ -13,7 +13,7 @@ import {
   updateContainerConfigScalars,
   updateContainerConfigJson,
 } from './db/container-configs.js';
-import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
+import { closeDb, createAgentGroup, getDb, initTestDb, runMigrations } from './db/index.js';
 import { PERSONA_PREPEND_FILE } from './group-persona.js';
 import { log } from './log.js';
 import { composeProjectDoc, type ProjectDocSpec } from './project-doc-compose.js';
@@ -88,12 +88,14 @@ describe('composeProjectDoc delivery', () => {
 
     const doc = await compose(ag);
 
-    // Prose, not headings, for the two whose absence WAS the bug: a heading
-    // proves a section was emitted, only the body proves the file was read.
-    expect(doc).toContain('You are a NanoClaw agent.'); // container/CLAUDE.md
-    expect(doc).toContain('# Credentials & External Services'); // skills/onecli-gateway/instructions.md
-    expect(doc).toContain('# NanoClaw Module: cli');
-    expect(doc).toContain('# NanoClaw Module: core');
+    // Whole files, not sentinel phrases: a heading proves a section was
+    // emitted, only the body proves the file was read, and reading the source
+    // here means adding a paragraph to it cannot break this test.
+    const read = (...p: string[]): string => fs.readFileSync(path.join(process.cwd(), ...p), 'utf-8').trim();
+    expect(doc).toContain(read('container', 'CLAUDE.md'));
+    expect(doc).toContain(read('container', 'skills', 'onecli-gateway', 'instructions.md'));
+    expect(doc).toContain(read('container', 'agent-runner', 'src', 'mcp-tools', 'cli.instructions.md'));
+    expect(doc).toContain(read('container', 'agent-runner', 'src', 'mcp-tools', 'core.instructions.md'));
   });
 
   it('inlines MCP server instructions from the container config', async () => {
@@ -130,6 +132,80 @@ describe('composeProjectDoc delivery', () => {
     const doc = await compose(ag);
 
     expect(doc).not.toContain('must not enter the project document');
+  });
+});
+
+describe('composeProjectDoc temp-file safety', () => {
+  // The group dir is the agent's read-write working directory, so anything the
+  // composer writes there by a guessable name is a path the agent can pre-plant.
+  // Red if writeAtomic goes back to a predictable name or drops the 'wx' flag.
+  it('does not follow a symlink planted where the temp file used to land', async () => {
+    const ag = await seed('ag-squat', 'squat-group');
+    const victim = path.join(TEST_ROOT, 'victim.txt');
+    fs.writeFileSync(victim, 'ORIGINAL');
+    // Exactly the name the old implementation used, and the pid is stable for
+    // the life of the host process.
+    const squat = path.join(groupDirOf(ag.folder), `CLAUDE.md.tmp-${process.pid}`);
+    fs.symlinkSync(victim, squat);
+
+    const doc = await compose(ag);
+
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('ORIGINAL');
+    expect(doc).toContain('# NanoClaw Runtime Contract');
+    expect(fs.lstatSync(squat).isSymbolicLink()).toBe(true); // left alone, not ours
+  });
+
+  // A directory squatting the temp path used to make the finally-rm throw
+  // ERR_FS_EISDIR, which rides wakeContainer's retry and darks the group forever.
+  it('composes even when a directory occupies the old temp path', async () => {
+    const ag = await seed('ag-squat-dir', 'squat-dir-group');
+    fs.mkdirSync(path.join(groupDirOf(ag.folder), `CLAUDE.md.tmp-${process.pid}`), { recursive: true });
+
+    await expect(compose(ag)).resolves.toContain('# NanoClaw Runtime Contract');
+  });
+
+  it('leaves no temp file behind', async () => {
+    const ag = await seed('ag-tmp', 'tmp-group');
+
+    await compose(ag);
+
+    expect(fs.readdirSync(groupDirOf(ag.folder)).filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+});
+
+describe('composeProjectDoc corrupt skill selection', () => {
+  // The sibling column (mcp_servers) is re-validated; this one used to be a bare
+  // cast, so a stored string turned the filter into a substring match and a
+  // stored null threw on every spawn. Red if parseSkillSelection is bypassed.
+  it.each([
+    ['null', 'null'],
+    ['a number', '7'],
+    ['an object', '{"welcome":true}'],
+    ['malformed JSON', '{not json'],
+  ])('falls back to every skill when the selection is %s', async (_label, stored) => {
+    const ag = await seed(`ag-bad-${stored.length}`, `bad-skills-${stored.length}`);
+    await getDb().run('UPDATE container_configs SET skills = ? WHERE agent_group_id = ?', stored, ag.id);
+
+    const doc = await compose(ag);
+
+    expect(doc).toContain('# NanoClaw Skill: onecli-gateway');
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('skill selection'), expect.anything());
+  });
+
+  it('does not substring-match a stored string against skill names', async () => {
+    const ag = await seed('ag-substr', 'substr-group');
+    await getDb().run(
+      'UPDATE container_configs SET skills = ? WHERE agent_group_id = ?',
+      JSON.stringify('xx-onecli-gateway-xx'),
+      ag.id,
+    );
+
+    const doc = await compose(ag);
+
+    // Treated as corrupt and widened to 'all', never as a selection that
+    // happens to contain the skill's name as a substring.
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('skill selection'), expect.anything());
+    expect(doc).toContain('# NanoClaw Skill: onecli-gateway');
   });
 });
 
@@ -228,13 +304,20 @@ describe('composeProjectDoc spec', () => {
     expect(doc.indexOf('# Memory System')).toBeLessThan(doc.indexOf('# NanoClaw Module: agents'));
   });
 
-  it('writes the file named by the spec and tolerates a missing base document', async () => {
+  // Tolerated so a partial payload install still spawns, but never silent: an
+  // absent runtime contract is the same shape as the bug this replaced, and it
+  // is what a wrong-cwd host looks like. Red if the warn is dropped.
+  it('writes the file named by the spec and warns loudly on a missing base document', async () => {
     const ag = await seed('ag-nobase', 'nobase-group');
 
     const doc = await compose(ag, { fileName: 'AGENTS.md', baseDocPath: path.join('container', 'nope.md') });
 
     expect(doc).not.toContain('# NanoClaw Runtime Contract');
     expect(doc).toContain('# NanoClaw Module: core');
+    expect(log.warn).toHaveBeenCalledWith(
+      'Project document composed without its base document',
+      expect.objectContaining({ file: 'AGENTS.md' }),
+    );
   });
 });
 
