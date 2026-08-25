@@ -17,7 +17,8 @@ import {
   validateMcpServerName,
   type McpServerConfig,
 } from '../../container-config.js';
-import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
+import { buildAgentGroupImage, killContainer } from '../../container-runner.js';
+import { requestWake } from '../../request-wake.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
@@ -28,7 +29,7 @@ import { notifyAgent } from '../approvals/index.js';
 
 async function wakeSessionById(sessionId: string): Promise<void> {
   const session = await getSession(sessionId);
-  if (session) await wakeContainer(session);
+  if (session) await requestWake(session, 'self-mod-apply');
 }
 
 export async function applyInstallPackages(payload: Record<string, unknown>, session: Session): Promise<void> {

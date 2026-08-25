@@ -35,7 +35,8 @@ import { getSession, isTaskThread, updateSession } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { log } from './log.js';
 import { heartbeatPath, withExistingMailboxSession } from './session-manager.js';
-import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { getContainerStartedAtMs, isContainerRunning, killContainer } from './container-runner.js';
+import { requestWake } from './request-wake.js';
 import type { Session } from './types.js';
 import type { ContainerState, InboundMailbox, OutboundMailbox } from './mailbox/index.js';
 
@@ -147,7 +148,7 @@ async function reconcileActiveSession(session: Session): Promise<void> {
     // session transaction so serialized implementations do not re-enter
     // themselves while the sweep still owns the session.
     log.info('Waking container for due messages', { sessionId: session.id, count: dueCount });
-    await wakeContainer(session);
+    await requestWake(session, 'due-message');
 
     await withExistingMailboxSession(agentGroup.id, session.id, async (mailbox) => {
       await maintainSessionMailbox(mailbox, session, agentGroup.id, true);

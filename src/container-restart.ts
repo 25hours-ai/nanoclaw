@@ -4,7 +4,8 @@
  * Writes an on_wake message to each session, kills the container, then
  * wakes a fresh container via the onExit callback — race-free.
  */
-import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { isContainerRunning, killContainer } from './container-runner.js';
+import { requestWake } from './request-wake.js';
 import { getSession, getSessionsByAgentGroup } from './db/sessions.js';
 import { log } from './log.js';
 import { withExistingMailboxSession, writeSessionMessage } from './session-manager.js';
@@ -15,7 +16,7 @@ import { withExistingMailboxSession, writeSessionMessage } from './session-manag
  * Only targets sessions that actually have a running container.
  * If `wakeMessage` is provided, each session gets an on_wake message
  * (picked up only by the fresh container's first poll) and a
- * wakeContainer call on exit. Without it, containers are killed and
+ * wake request on exit. Without it, containers are killed and
  * only come back on the next real user message.
  */
 export async function restartAgentGroupContainers(
@@ -61,7 +62,7 @@ export async function restartAgentGroupContainers(
         ? () => {
             void (async () => {
               const s = await getSession(session.id);
-              if (s) await wakeContainer(s);
+              if (s) await requestWake(s, 'container-restart');
             })();
           }
         : undefined,
