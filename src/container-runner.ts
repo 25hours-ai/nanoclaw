@@ -23,7 +23,7 @@ import {
   INSTALL_SLUG,
   TIMEZONE,
 } from './config.js';
-import { CONTAINER_PLUGINS_DIR, materializeContainerJson, parseSkillSelection } from './container-config.js';
+import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
@@ -844,8 +844,7 @@ export function syncSkillSymlinks(
  * from `container/skills/` so newly-added upstream skills appear automatically.
  */
 function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
-  const selected = parseSkillSelection(JSON.stringify(containerConfig.skills), 'container config');
-  if (selected !== 'all') return selected;
+  if (containerConfig.skills !== 'all') return containerConfig.skills;
   const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
   return fs.existsSync(sharedSkillsDir)
     ? fs.readdirSync(sharedSkillsDir).filter((e) => {

@@ -332,9 +332,11 @@ function parseRuntimeTier(raw: string | null | undefined, groupName: string): 'c
  * a bare string would otherwise turn an `includes` filter into a substring
  * match and silently drop skills.
  *
- * Exported so the composer and `selectedSkillNames` read the column through one
- * parse. Two readings that must agree, plus a comment asserting they do, is how
- * the document ends up teaching a skill the agent was never given.
+ * The single reading of this column. `configFromDb` used to cast it instead,
+ * which threw on a corrupt row before the composer's tolerance could apply:
+ * every spawn failed, and `wakeContainer`'s retry contract darkened the group.
+ * Two readings that must agree is also how the document ends up teaching a
+ * skill the agent was never given.
  */
 export function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
   if (raw === undefined) return 'all';
@@ -360,7 +362,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     },
     imageTag: row.image_tag ?? undefined,
     additionalMounts: JSON.parse(row.additional_mounts) as AdditionalMountConfig[],
-    skills: JSON.parse(row.skills) as string[] | 'all',
+    skills: parseSkillSelection(row.skills, group.name),
     provider: row.provider ?? undefined,
     groupName: group.name,
     assistantName: row.assistant_name ?? group.name,
