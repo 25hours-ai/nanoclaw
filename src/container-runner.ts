@@ -27,7 +27,7 @@ import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-con
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
-import { composeProjectDoc, DEFAULT_PROJECT_DOC } from './project-doc-compose.js';
+import { composeGroupProjectDoc, DEFAULT_PROJECT_DOC, parseSkillSelection } from './project-doc-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { getSession } from './db/sessions.js';
@@ -474,7 +474,7 @@ export async function buildMounts(
 
     // Compose CLAUDE.md fresh every spawn: every instruction source inlined
     // into one flat file. See `project-doc-compose.ts`.
-    await composeProjectDoc(agentGroup, groupDir, DEFAULT_PROJECT_DOC);
+    await composeGroupProjectDoc(agentGroup, groupDir, DEFAULT_PROJECT_DOC);
   }
 
   const mounts: VolumeMount[] = [];
@@ -844,7 +844,8 @@ export function syncSkillSymlinks(
  * from `container/skills/` so newly-added upstream skills appear automatically.
  */
 function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
-  if (containerConfig.skills !== 'all') return containerConfig.skills;
+  const selected = parseSkillSelection(JSON.stringify(containerConfig.skills), 'container config');
+  if (selected !== 'all') return selected;
   const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
   return fs.existsSync(sharedSkillsDir)
     ? fs.readdirSync(sharedSkillsDir).filter((e) => {

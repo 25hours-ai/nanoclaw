@@ -16,7 +16,7 @@ import {
 import { closeDb, createAgentGroup, getDb, initTestDb, runMigrations } from './db/index.js';
 import { PERSONA_PREPEND_FILE } from './group-persona.js';
 import { log } from './log.js';
-import { composeProjectDoc, DEFAULT_PROJECT_DOC, type ProjectDocSpec } from './project-doc-compose.js';
+import { composeGroupProjectDoc, DEFAULT_PROJECT_DOC, type ProjectDocSpec } from './project-doc-compose.js';
 import type { AgentGroup } from './types.js';
 
 const CLAUDE_SPEC: ProjectDocSpec = {
@@ -45,7 +45,7 @@ function writePersona(folder: string, text: string): void {
 }
 
 async function compose(ag: AgentGroup, spec: ProjectDocSpec = CLAUDE_SPEC): Promise<string> {
-  await composeProjectDoc(ag, groupDirOf(ag.folder), spec);
+  await composeGroupProjectDoc(ag, groupDirOf(ag.folder), spec);
   return fs.readFileSync(path.join(groupDirOf(ag.folder), spec.fileName), 'utf-8');
 }
 
@@ -61,7 +61,7 @@ afterEach(async () => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
 });
 
-describe('composeProjectDoc delivery', () => {
+describe('composeGroupProjectDoc delivery', () => {
   // The regression guard for the bug this composer was rewritten to fix: an
   // `@` import whose target resolves outside the project directory is dropped
   // by Claude Code silently, so the document must not contain one at all.
@@ -135,7 +135,7 @@ describe('composeProjectDoc delivery', () => {
   });
 });
 
-describe('composeProjectDoc temp-file safety', () => {
+describe('composeGroupProjectDoc temp-file safety', () => {
   // The group dir is the agent's read-write working directory, so anything the
   // composer writes there by a guessable name is a path the agent can pre-plant.
   // Red if writeAtomic goes back to a predictable name or drops the 'wx' flag.
@@ -173,7 +173,7 @@ describe('composeProjectDoc temp-file safety', () => {
   });
 });
 
-describe('composeProjectDoc corrupt skill selection', () => {
+describe('composeGroupProjectDoc corrupt skill selection', () => {
   // The sibling column (mcp_servers) is re-validated; this one used to be a bare
   // cast, so a stored string turned the filter into a substring match and a
   // stored null threw on every spawn. Red if parseSkillSelection is bypassed.
@@ -209,7 +209,7 @@ describe('composeProjectDoc corrupt skill selection', () => {
   });
 });
 
-describe('composeProjectDoc persona', () => {
+describe('composeGroupProjectDoc persona', () => {
   it('leads the document, before the runtime contract', async () => {
     const ag = await seed('ag-persona', 'persona-group');
     writePersona(ag.folder, 'You are an SDR agent.\n');
@@ -245,7 +245,7 @@ describe('composeProjectDoc persona', () => {
   });
 });
 
-describe('composeProjectDoc skill selection', () => {
+describe('composeGroupProjectDoc skill selection', () => {
   // Red if the walk stops filtering: the document would teach a skill whose
   // SKILL.md syncSkillSymlinks did not plant, which is a live contradiction.
   it('omits resident prose for a skill the group did not select', async () => {
@@ -267,7 +267,7 @@ describe('composeProjectDoc skill selection', () => {
   });
 });
 
-describe('composeProjectDoc cli_scope', () => {
+describe('composeGroupProjectDoc cli_scope', () => {
   // Red-on-delete guard for the `scheduling`/`cli` exclusion: the agent is
   // taught `ncl tasks` iff it has ncl.
   it('inlines the scheduling module at the default cli_scope', async () => {
@@ -291,7 +291,7 @@ describe('composeProjectDoc cli_scope', () => {
   });
 });
 
-describe('composeProjectDoc spec', () => {
+describe('composeGroupProjectDoc spec', () => {
   it('places extra sections after the base document and before the module sections', async () => {
     const ag = await seed('ag-extra', 'extra-group');
 
@@ -321,7 +321,7 @@ describe('composeProjectDoc spec', () => {
   });
 });
 
-describe('composeProjectDoc size cap', () => {
+describe('composeGroupProjectDoc size cap', () => {
   const bigMcp = (n: number): Record<string, { command: string; args: string[]; instructions: string }> =>
     Object.fromEntries(
       Array.from({ length: n }, (_, i) => [`bloated${i}`, { command: 'x', args: [], instructions: 'B'.repeat(9000) }]),

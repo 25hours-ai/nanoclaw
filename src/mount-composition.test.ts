@@ -24,7 +24,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 // under test; every path it would write is created below instead.
 vi.mock('./project-doc-compose.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./project-doc-compose.js')>()),
-  composeProjectDoc: vi.fn(),
+  composeGroupProjectDoc: vi.fn(),
 }));
 vi.mock('./log.js', () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() },

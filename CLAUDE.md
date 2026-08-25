@@ -77,7 +77,6 @@ For ad-hoc central queries from skills or scripts, use the in-tree wrapper rathe
 | `src/db/container-configs.ts` | CRUD for `container_configs` table (per-group container runtime config) |
 | `src/backfill-container-configs.ts` | Migrates legacy `container.json` files into the DB on startup |
 | `src/project-doc-compose.ts` | Composes each group's project document — every instruction source read on the host and inlined into one flat file, no imports |
-| `src/cleanup-legacy-fragments.ts` | One-shot startup migration removing the import-era `.claude-fragments/` and `.claude-shared.md` from group folders |
 | `src/container-restart.ts` | Kill + on-wake respawn for agent group containers |
 | `src/db/` | DB layer — agent_groups, messaging_groups, sessions, container_configs, user_roles, user_dms, pending_*, migrations |
 | `src/channels/` | Channel adapter infra (registry, Chat SDK bridge); specific channel adapters are skill-installed from the `channels` branch |

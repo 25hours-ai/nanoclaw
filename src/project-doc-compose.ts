@@ -1,20 +1,19 @@
 /**
  * Project-document composition for agent groups.
  *
- * Every provider gets one flat file in `groups/<folder>/`: the group's standing
- * instructions, the provider's shared base document, its own pointer blocks,
- * and one section per capability the group has switched on. Every source is
+ * One flat file per group: standing instructions, the provider's base document,
+ * its pointer blocks, and one section per enabled capability. Every source is
  * read here, on the host, and written out as text.
  *
- * LOAD-BEARING: nothing may become a pointer again. The previous shape emitted
- * `@` import lines aimed at symlinks under `/app`; Claude Code drops any import
- * resolving outside the project directory, silently, and a headless container
- * has nobody to answer the approval dialog. Eight of nine sections never
- * reached the model. `project-doc-compose.test.ts` ("emits no @ import lines")
- * goes red if that returns.
+ * LOAD-BEARING: nothing may become a pointer again. This previously emitted `@`
+ * imports at symlinks under `/app`; a Claude Code update then gated imports
+ * resolving outside the project directory behind an approval a headless
+ * container cannot give, and eight of nine sections silently stopped arriving.
+ * `project-doc-compose.test.ts` ("emits no @ import lines") goes red if it
+ * returns.
  *
- * Runs on every container start, so editing a source in the repository still
- * reaches every agent on its next spawn.
+ * Runs on every container start, so editing a source still reaches every agent
+ * on its next spawn.
  */
 import { randomUUID } from 'crypto';
 import fs from 'fs';
@@ -95,7 +94,7 @@ const SKILLS_HOST_SUBPATH = path.join('container', 'skills');
  * Reads nothing the agent can author except `instructions.prepend.md`, which
  * `readGroupPersona` opens with O_NOFOLLOW.
  */
-export async function composeProjectDoc(group: AgentGroup, groupDir: string, spec: ProjectDocSpec): Promise<void> {
+export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string, spec: ProjectDocSpec): Promise<void> {
   if (!fs.existsSync(groupDir)) fs.mkdirSync(groupDir, { recursive: true });
 
   const configRow = await getContainerConfig(group.id);
@@ -147,10 +146,9 @@ export async function composeProjectDoc(group: AgentGroup, groupDir: string, spe
   }
 
   // Resident skill prose. A skill's `SKILL.md` is loaded on demand by skill
-  // discovery; its `instructions.md` is the part that has to be in context
-  // before the agent knows it needs it, because a prohibition cannot be lazily
-  // loaded. Follows the same selection as the skill links the runner plants, so
-  // the document never teaches a skill the agent does not have.
+  // discovery; its `instructions.md` has to be in context before the agent
+  // knows it needs it, because a prohibition cannot be lazily loaded. Same
+  // selection as the links the runner plants — one parse, see above.
   const skillsHostDir = path.join(process.cwd(), SKILLS_HOST_SUBPATH);
   if (fs.existsSync(skillsHostDir)) {
     for (const skillName of fs.readdirSync(skillsHostDir).sort()) {
@@ -173,10 +171,14 @@ export async function composeProjectDoc(group: AgentGroup, groupDir: string, spe
 
 /**
  * `'all'`, or the names the group selected. Anything else is treated as `'all'`:
- * a bare string would otherwise turn the `includes` filter into a substring
+ * a bare string would otherwise turn an `includes` filter into a substring
  * match and silently drop skills.
+ *
+ * Exported so the composer and `selectedSkillNames` read the column through one
+ * parse. Two readings that must agree, plus a comment asserting they do, is how
+ * the document ends up teaching a skill the agent was never given.
  */
-function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
+export function parseSkillSelection(raw: string | undefined, groupName: string): string[] | 'all' {
   if (raw === undefined) return 'all';
   let parsed: unknown;
   try {

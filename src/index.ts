@@ -5,7 +5,6 @@
  * start delivery polls, start sweep, handle shutdown.
  */
 import { backfillContainerConfigs } from './backfill-container-configs.js';
-import { cleanupLegacyFragments } from './cleanup-legacy-fragments.js';
 import { CENTRAL_DB_PATH } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { adoptRunningSessions } from './container-runner.js';
@@ -79,10 +78,6 @@ async function main(): Promise<void> {
   // Idempotent — skips groups that already have a config row.
   if (db.dialect === 'sqlite') await backfillContainerConfigs();
   else log.info('Skipping local container.json backfill for non-local central DB');
-
-  // 1c. Remove the import-era project-doc artifacts from group folders.
-  // Filesystem-only, so it runs regardless of which central DB backs this install.
-  cleanupLegacyFragments();
 
   // 2. Session runtime: prove it is reachable, then reconcile what survived a
   // restart. Adoption replaces the old reap-everything cleanup — a session that

@@ -17,11 +17,8 @@ The mechanical steps under **Install** carry `nc:` directive fences: an agent re
 
 ### Pre-flight
 
-This payload composes AGENTS.md through trunk's shared composer, so the checkout
-must already carry it. If `src/project-doc-compose.ts` is absent, stop and tell
-the operator to update NanoClaw first (`/update-nanoclaw`) — installing anyway
-fails at the build step below with a bare TypeScript error about a missing
-module.
+Requires `src/project-doc-compose.ts` on trunk. If it is missing, stop and tell
+the operator to run `/update-nanoclaw` first.
 
 Check whether the payload is already wired (a prior apply, or a trunk that still carries it). All of these present means installed — skip to **Authenticate**:
 
