@@ -590,11 +590,33 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   void (async () => {
     const skillDir = process.argv[2];
     if (!skillDir) {
-      console.error('usage: pnpm exec tsx setup/lib/skill-driver.ts <skillDir>');
+      console.error('usage: pnpm exec tsx setup/lib/skill-driver.ts <skillDir> [--input key=value]...');
       process.exit(2);
     }
+    // Pre-bind a prompt the caller already collected. A nested step's stdout is
+    // a pipe, so clack cannot echo what the operator types there; a parent that
+    // owns the terminal asks first and passes the answer down.
+    // Every argument after the skill dir must be a recognised flag. Skipping an
+    // unexpected one would swallow exactly the failure this flag can cause: an
+    // unquoted `--input k={{var}}` in a caller's document word-splits, and the
+    // orphaned half arrives here as a bare argv entry. Silently dropping it
+    // leaves the child validating a truncated value; refusing names it.
+    const inputs: Record<string, string> = {};
+    const usage = (msg: string): never => {
+      console.error(`${msg}\nusage: skill-driver <skill-dir> [--input key=value]...`);
+      process.exit(2);
+    };
+    for (let i = 3; i < process.argv.length; i++) {
+      const arg = process.argv[i] ?? '';
+      if (arg !== '--input') usage(`unexpected argument: ${arg}`);
+      if (i + 1 >= process.argv.length) usage('--input expects key=value, got nothing');
+      const pair = process.argv[++i] ?? '';
+      const eq = pair.indexOf('=');
+      if (eq <= 0) usage(`--input expects key=value, got: ${pair}`);
+      inputs[pair.slice(0, eq)] = pair.slice(eq + 1);
+    }
     p.intro(`Applying ${skillDir}`);
-    const res = await runSkill(skillDir);
+    const res = await runSkill(skillDir, Object.keys(inputs).length ? { inputs } : {});
     if (fullyApplied(res)) {
       p.outro('Done — fully applied.');
     } else {
