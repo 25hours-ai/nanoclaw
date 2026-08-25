@@ -397,17 +397,11 @@ No agent groups exist yet, so there is nothing to grant Dial to — skipping the
 ```nc:run capture:agent_groups when:has_agents=yes effect:fetch
 ncl groups list --json | jq -r '[.data[] | "\(.id) (\(.name))"] | join(", ")'
 ```
-```nc:run capture:agent_scope_warning when:has_agents=yes effect:fetch
-sh .claude/skills/add-dial-tool/agent-scope-warning.sh '{{agent_groups}}'
-```
 ```nc:operator when:has_agents=yes
-{{agent_scope_warning}}
-```
-```nc:run capture:agent_scope_question when:has_agents=yes effect:fetch
-cat .claude/skills/add-dial-tool/agent-scope-question.txt
+Agents on this install: {{agent_groups}}. Giving an agent Dial lets it text and call any number and buy numbers, billed to your Dial account. Agents you leave out are blocked at the gateway (reversible by running /add-dial-tool again). Agents created after this run have Dial until the next run.
 ```
 ```nc:prompt dial_agents validate:^(all|none|ag-[A-Za-z0-9-]+(,ag-[A-Za-z0-9-]+)*)$ normalize:trim when:has_agents=yes
-{{agent_scope_question}}
+Which agents may use Dial? Enter agent ids separated by commas with no spaces (the `ag-…` column), `all` for every agent, or `none` to install the tool with every agent blocked for now.
 ```
 ```nc:run effect:step when:has_agents=yes
 pnpm exec tsx setup/lib/skill-driver.ts .claude/skills/add-dial-tool --input 'dial_agents={{dial_agents}}'

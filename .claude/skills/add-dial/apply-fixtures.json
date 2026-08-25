@@ -68,14 +68,6 @@
         {
           "match": "number list",
           "stdout": "+14155550123"
-        },
-        {
-          "match": "agent-scope-warning.sh",
-          "stdout": "Agents on this install: ag-1787000000000-aaaaaa (Nano). <consent text from agent-scope-warning.sh>"
-        },
-        {
-          "match": "agent-scope-question.txt",
-          "stdout": "<question text from agent-scope-question.txt>"
         }
       ],
       "stepFields": {
