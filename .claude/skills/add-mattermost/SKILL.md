@@ -103,10 +103,11 @@ Tell the operator:
 
 ```nc:operator
 Create a dedicated Mattermost bot:
-1. As a System Admin, open System Console → Integrations → Bot Accounts and enable bot-account creation.
-2. Create a bot such as `nanoclaw`, then copy the access token shown after creation.
-3. Add the bot to every team and channel where it should receive messages. Bots do not join channels automatically.
-4. Keep the token private. If it is lost, create a new token and deactivate the obsolete one after replacement.
+1. As a System Admin, open System Console → Integrations → Bot Accounts and turn on Enable Bot Account Creation if it is disabled. This setting only permits bot creation; it is not where bots are created.
+2. Return to the Mattermost workspace, open the Product menu → Integrations → Bot Accounts, select Add Bot Account, and create a bot such as `nanoclaw`.
+3. Copy the access token shown after creation.
+4. Add the bot to every team and channel where it should receive messages. Bots do not join teams or channels automatically.
+5. Keep the token private. If it is lost, create a new token and deactivate the obsolete one after replacement.
 ```
 
 ```nc:prompt bot_token secret normalize:trim validate:^[A-Za-z0-9_-]{20,}$
