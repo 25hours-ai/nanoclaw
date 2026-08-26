@@ -24,6 +24,14 @@ describe('Mattermost bot setup guidance', () => {
     expect(skill).toContain('Bots do not join teams or channels automatically.');
   });
 
+  it('installs and runs focused adapter regressions with the registration test', () => {
+    expect(skill).toContain('src/channels/mattermost-adapter/adapter.test.ts');
+    expect(skill).toContain('src/channels/mattermost-adapter/websocket.test.ts');
+    expect(skill).toContain(
+      'pnpm exec vitest run src/channels/mattermost-registration.test.ts src/channels/mattermost-adapter/adapter.test.ts src/channels/mattermost-adapter/websocket.test.ts',
+    );
+  });
+
   it('requires the operator to choose how a detected server is used', () => {
     expect(skill).toContain('detection never selects a server on your behalf');
     expect(skill).toContain('validate:^(use|enter|create)$');

@@ -180,12 +180,14 @@ Copy the canonical adapter and registration test from the `channels` branch.
 src/channels/mattermost.ts
 src/channels/mattermost-registration.test.ts
 src/channels/mattermost-adapter/adapter.ts
+src/channels/mattermost-adapter/adapter.test.ts
 src/channels/mattermost-adapter/format.ts
 src/channels/mattermost-adapter/index.ts
 src/channels/mattermost-adapter/rest.ts
 src/channels/mattermost-adapter/thread-id.ts
 src/channels/mattermost-adapter/types.ts
 src/channels/mattermost-adapter/websocket.ts
+src/channels/mattermost-adapter/websocket.test.ts
 ```
 
 Append the channel's single reach-in to the barrel, skipping it if present.
@@ -305,10 +307,11 @@ Build the composed host to guard the typed Chat SDK bridge call and dependency.
 pnpm run build
 ```
 
-Run the registration test through the real channel barrel.
+Run the registration test through the real channel barrel and the focused
+adapter regressions installed beside the implementation.
 
 ```nc:run effect:test
-pnpm exec vitest run src/channels/mattermost-registration.test.ts
+pnpm exec vitest run src/channels/mattermost-registration.test.ts src/channels/mattermost-adapter/adapter.test.ts src/channels/mattermost-adapter/websocket.test.ts
 ```
 
 Restart NanoClaw so the channel and credentials load.
