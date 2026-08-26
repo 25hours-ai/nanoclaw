@@ -23,10 +23,10 @@ base URL.
 3. Inspect Docker/Compose for Mattermost containers. If a matching container
    exists but is stopped, offer to start it; do not start or recreate it
    without the user's approval.
-4. If one healthy server is found, tell the user and use it. If multiple
-   distinct servers are found, ask which one to use. Treat localhost and
-   127.0.0.1 endpoints for the same container as one server and prefer the
-   hostname in its configured Site URL; otherwise prefer `localhost`.
+4. If a healthy server is found, show its URL and ask whether to use it, enter
+   another URL, or create the bundled local evaluation/development server.
+   Never select a detected server on the user's behalf. Treat localhost and
+   127.0.0.1 endpoints for the same container as one detection.
 5. If nothing local is found, ask whether the user has a remote Mattermost.
    If not, offer the local evaluation installation in
    [LOCAL_SERVER.md](LOCAL_SERVER.md). Read that file only for local server
@@ -41,20 +41,88 @@ data, so show what will be created and get approval first.
 
 ### 1. Detect the server
 
-Probe a configured URL and the conventional local endpoints. The detector
-always returns structured output: `found` binds `base_url`; `none` leaves it
-for the guarded prompt below.
+Probe a configured URL and the conventional local endpoints. Detection is only
+a suggestion: always let the operator confirm it, enter another URL, or create
+the bundled local evaluation/development server.
 
-```nc:run capture:discovery=.discovery,base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch
+```nc:run capture:discovery=.discovery,detected_url=.base_url,detected_config_access=.config_access,detected_container=.mattermost_container effect:fetch
 node .claude/skills/add-mattermost/scripts/discover-server.mjs
 ```
 
-```nc:operator when:discovery=none
-No healthy configured or local Mattermost server was detected. If you have a remote server, provide its URL next. Otherwise install the local evaluation server by following LOCAL_SERVER.md, then provide http://localhost:8065.
+```nc:operator when:discovery=found
+A healthy Mattermost server was detected at {{detected_url}}. Confirm whether to use it; detection never selects a server on your behalf.
 ```
 
-```nc:prompt base_url when:discovery=none normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
+```nc:prompt server_choice when:discovery=found normalize:lower validate:^(use|enter|create)$
+Enter `use` for {{detected_url}}, `enter` to provide another Mattermost URL, or `create` for a new local evaluation/development server.
+```
+
+```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:server_choice=use
+node .claude/skills/add-mattermost/scripts/select-server.mjs use "{{detected_url}}" "{{detected_config_access}}" "{{detected_container}}"
+```
+
+```nc:prompt entered_url when:server_choice=enter normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
 Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
+```
+
+```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:server_choice=enter
+node .claude/skills/add-mattermost/scripts/select-server.mjs enter "{{entered_url}}"
+```
+
+```nc:run capture:create_requested when:server_choice=create
+printf 'yes\n'
+```
+
+```nc:operator when:discovery=none
+No healthy configured or local Mattermost server was detected. Choose whether to enter an existing remote server URL or create the bundled local evaluation/development server.
+```
+
+```nc:prompt no_server_choice when:discovery=none normalize:lower validate:^(enter|create)$
+Enter `enter` to provide a Mattermost URL or `create` for a new local evaluation/development server.
+```
+
+```nc:prompt entered_url_new when:no_server_choice=enter normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
+Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
+```
+
+```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:no_server_choice=enter
+node .claude/skills/add-mattermost/scripts/select-server.mjs enter "{{entered_url_new}}"
+```
+
+```nc:run capture:create_requested when:no_server_choice=create
+printf 'yes\n'
+```
+
+Tell the operator exactly what local creation does, then obtain approval:
+
+```nc:operator when:create_requested=yes
+Creating the local evaluation/development server will start Mattermost Team Edition and PostgreSQL containers, create a Docker network and named persistent volumes, write reproducible files under .nanoclaw/mattermost, and bind 127.0.0.1:8065. Docker and Compose must be available and port 8065 must be free. If another server uses that port, this installer will stop without changing it.
+```
+
+```nc:prompt local_install_approval when:create_requested=yes normalize:lower validate:^install$
+Enter `install` to approve creating and starting those local resources.
+```
+
+After approval, verify prerequisites, create the reproducible stack, and wait
+at most 60 seconds for Mattermost. On failure, show bounded service logs and
+stop; do not claim the server exists.
+
+```nc:run effect:external when:local_install_approval=install
+docker info >/dev/null
+docker compose version >/dev/null
+node -e 'const net=require("node:net");const s=net.createServer();s.once("error",()=>process.exit(1));s.listen(8065,"127.0.0.1",()=>s.close())'
+mkdir -p .nanoclaw/mattermost
+cp .claude/skills/add-mattermost/assets/compose.yml .nanoclaw/mattermost/compose.yml
+umask 077
+test -f .nanoclaw/mattermost/.env || printf 'MATTERMOST_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .nanoclaw/mattermost/.env
+docker compose -f .nanoclaw/mattermost/compose.yml up -d
+for attempt in $(seq 1 30); do curl -fsS --connect-timeout 1 --max-time 1 http://localhost:8065/api/v4/system/ping >/dev/null && exit 0; sleep 1; done
+docker compose -f .nanoclaw/mattermost/compose.yml logs --tail 100 mattermost
+exit 1
+```
+
+```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:local_install_approval=install
+node .claude/skills/add-mattermost/scripts/select-server.mjs create
 ```
 
 ### 2. Align the server's canonical URL

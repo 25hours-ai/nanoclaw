@@ -110,5 +110,5 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ discovery: 'none', base_url: '', config_access: 'unavailable', mattermost_container: 'none' })}\n`,
+  `${JSON.stringify({ discovery: 'none', base_url: 'none', config_access: 'unavailable', mattermost_container: 'none' })}\n`,
 );

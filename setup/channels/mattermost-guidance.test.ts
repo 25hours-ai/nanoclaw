@@ -20,6 +20,20 @@ describe('Mattermost bot setup guidance', () => {
     expect(skill).toContain('Bots do not join teams or channels automatically.');
   });
 
+  it('requires the operator to choose how a detected server is used', () => {
+    expect(skill).toContain('detection never selects a server on your behalf');
+    expect(skill).toContain('validate:^(use|enter|create)$');
+    expect(skill).toContain('`enter` to provide another Mattermost URL');
+    expect(skill).toContain('`create` for a new local evaluation/development server');
+    expect(skill).toContain('Never select a detected server on the user\'s behalf');
+    expect(skill).toContain('Enter `install` to approve creating and starting those local resources');
+    expect(skill).toContain('port 8065 must be free');
+    expect(skill).toContain('for attempt in $(seq 1 30)');
+    expect(skill).toContain('curl -fsS --connect-timeout 1 --max-time 1');
+    expect(skill).toContain('docker info >/dev/null');
+    expect(skill).toContain('logs --tail 100 mattermost');
+  });
+
   it('configures and verifies the exact canonical SiteURL without weakening origin checks', () => {
     expect(skill).toContain('mmctl config set ServiceSettings.SiteURL "{{base_url}}" --local');
     expect(skill).toContain('/api/v4/config/client?format=old');
