@@ -288,7 +288,7 @@ Your Mattermost username, without `@`.
 
 Resolve that user and open the DM shared with the bot.
 
-```nc:run capture:owner_user_id=.id effect:fetch
+```nc:run capture:owner_user_id=.id,owner_handle=.id effect:fetch
 curl -sf "{{base_url}}/api/v4/users/username/{{owner_username}}" -H "Authorization: Bearer {{bot_token}}"
 ```
 
@@ -296,7 +296,7 @@ curl -sf "{{base_url}}/api/v4/users/username/{{owner_username}}" -H "Authorizati
 curl -sf -X POST "{{base_url}}/api/v4/channels/direct" -H "Authorization: Bearer {{bot_token}}" -H "Content-Type: application/json" -d '["{{owner_user_id}}","{{bot_user_id}}"]' | jq -er '"mattermost:" + .id'
 ```
 
-The resolved `platform_id` and `owner_username` are used by
+The resolved `platform_id`, `owner_handle`, and `owner_username` are used by
 `/init-first-agent`. If an owner exists, use `/manage-channels` instead.
 
 ### 7. Build, test, and restart

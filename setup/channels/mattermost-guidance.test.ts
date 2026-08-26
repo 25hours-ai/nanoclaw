@@ -161,6 +161,15 @@ describe('Mattermost bot setup guidance', () => {
     );
   });
 
+  it('binds the generic wizard owner handle to the resolved Mattermost user ID', () => {
+    const ownerLookup = directives.find(
+      (directive) =>
+        directive.kind === 'run' &&
+        directive.body.some((line) => line.includes('/api/v4/users/username/{{owner_username}}')),
+    );
+    expect(ownerLookup?.attrs.capture).toBe('owner_user_id=.id,owner_handle=.id');
+  });
+
   it('replaces a stale canonical URL without changing existing credentials', () => {
     const root = mkdtempSync(join(tmpdir(), 'nanoclaw-mattermost-rerun-'));
     const previousCwd = process.cwd();
