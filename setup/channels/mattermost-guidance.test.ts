@@ -1,5 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+import { upsertEnvVar } from '../set-env.js';
 
 const skill = readFileSync('.claude/skills/add-mattermost/SKILL.md', 'utf8');
 const localServer = readFileSync('.claude/skills/add-mattermost/LOCAL_SERVER.md', 'utf8');
@@ -40,6 +44,33 @@ describe('Mattermost bot setup guidance', () => {
     expect(skill).toContain('Do not broaden `ServiceSettings.AllowCorsFrom`');
     expect(skill).toContain('System Console → Environment → Web Server');
     expect(skill).toContain('config_access=docker');
+    expect(skill).toContain(
+      'setup/index.ts --step set-env -- --key MATTERMOST_BASE_URL --value "{{base_url}}"',
+    );
+  });
+
+  it('replaces a stale canonical URL without changing existing credentials', () => {
+    const root = mkdtempSync(join(tmpdir(), 'nanoclaw-mattermost-rerun-'));
+    const previousCwd = process.cwd();
+    const before = [
+      'MATTERMOST_BASE_URL=http://localhost:8065',
+      'MATTERMOST_BOT_TOKEN=existing-bot-token',
+      'MATTERMOST_CALLBACK_URL=http://host.docker.internal:3000/webhook/mattermost',
+      'MATTERMOST_CALLBACK_SECRET=existing-callback-secret',
+      '',
+    ].join('\n');
+
+    try {
+      writeFileSync(join(root, '.env'), before);
+      process.chdir(root);
+      expect(upsertEnvVar('MATTERMOST_BASE_URL', 'http://127.0.0.1:8065')).toEqual({ existed: true });
+      expect(readFileSync(join(root, '.env'), 'utf8')).toBe(
+        before.replace('http://localhost:8065', 'http://127.0.0.1:8065'),
+      );
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps the evaluation server canonical and declarative', () => {

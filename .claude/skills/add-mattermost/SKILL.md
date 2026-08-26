@@ -253,7 +253,15 @@ the server-only callback context.
 openssl rand -hex 32
 ```
 
-Store the channel configuration. Existing keys remain unchanged on a re-run.
+Update the selected canonical URL on every run so choosing another server
+corrects an existing installation. Keep existing credentials unchanged.
+
+```nc:run effect:external
+pnpm exec tsx setup/index.ts --step set-env -- --key MATTERMOST_BASE_URL --value "{{base_url}}"
+```
+
+Store the remaining channel configuration. Existing credential keys remain
+unchanged on a re-run.
 
 ```nc:env-set
 MATTERMOST_BASE_URL={{base_url}}
