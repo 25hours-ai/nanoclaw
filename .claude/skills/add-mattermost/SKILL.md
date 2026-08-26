@@ -107,17 +107,13 @@ maximum of 60 seconds for Mattermost. If the operation fails, show the last
 100 service log lines and stop.
 
 ```nc:run effect:external when:local_install_approval=install
-docker info >/dev/null
-docker compose version >/dev/null
+docker info >/dev/null && docker compose version >/dev/null
 node -e 'const net=require("node:net");const s=net.createServer();s.once("error",()=>process.exit(1));s.listen(8065,"127.0.0.1",()=>s.close())'
 mkdir -p .nanoclaw/mattermost
 cp .claude/skills/add-mattermost/assets/compose.yml .nanoclaw/mattermost/compose.yml
-umask 077
-test -f .nanoclaw/mattermost/.env || printf 'MATTERMOST_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .nanoclaw/mattermost/.env
+test -f .nanoclaw/mattermost/.env || { umask 077; printf 'MATTERMOST_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .nanoclaw/mattermost/.env; }
 docker compose -f .nanoclaw/mattermost/compose.yml up -d
-for attempt in $(seq 1 30); do curl -fsS --connect-timeout 1 --max-time 1 http://localhost:8065/api/v4/system/ping >/dev/null && exit 0; sleep 1; done
-docker compose -f .nanoclaw/mattermost/compose.yml logs --tail 100 mattermost
-exit 1
+for attempt in $(seq 1 30); do curl -fsS --connect-timeout 1 --max-time 1 http://localhost:8065/api/v4/system/ping >/dev/null && exit 0; sleep 1; done; docker compose -f .nanoclaw/mattermost/compose.yml logs --tail 100 mattermost; exit 1
 ```
 
 ```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:local_install_approval=install
@@ -131,6 +127,12 @@ Before you install the adapter, set `ServiceSettings.SiteURL` to the same URL:
 `{{base_url}}`. Keep
 `ServiceSettings.WebsocketURL` blank. Do not change
 `ServiceSettings.AllowCorsFrom` to correct an Origin error.
+
+For the evaluation server, the Compose configuration manages SiteURL:
+
+```nc:operator when:config_access=managed
+The evaluation server already sets SiteURL to {{base_url}} and keeps WebsocketURL blank. NanoClaw will verify these values before it continues.
+```
 
 When discovery found host-local `mmctl`, ask before changing the server:
 
@@ -258,14 +260,13 @@ openssl rand -hex 32
 Update `MATTERMOST_BASE_URL` on each run. This update lets the user select a
 different server. Do not change existing credentials.
 
-```nc:run effect:external
+```nc:run effect:external remove:.claude/skills/add-mattermost/scripts/remove-base-url.mjs
 pnpm exec tsx setup/index.ts --step set-env -- --key MATTERMOST_BASE_URL --value "{{base_url}}"
 ```
 
 Store the other channel settings. Do not replace existing credentials.
 
 ```nc:env-set
-MATTERMOST_BASE_URL={{base_url}}
 MATTERMOST_BOT_TOKEN={{bot_token}}
 MATTERMOST_CALLBACK_URL={{callback_url}}
 MATTERMOST_CALLBACK_SECRET={{callback_secret}}
