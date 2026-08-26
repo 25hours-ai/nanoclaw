@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { upsertEnvVar } from '../set-env.js';
+import { channelDmLabel, initialChannelOptions, runInitialChannel } from './initial-setup.js';
 
 const skill = readFileSync('.claude/skills/add-mattermost/SKILL.md', 'utf8');
 const localServer = readFileSync('.claude/skills/add-mattermost/LOCAL_SERVER.md', 'utf8');
@@ -22,6 +23,20 @@ describe('Mattermost bot setup guidance', () => {
 
   it('requires both team and channel membership', () => {
     expect(skill).toContain('Bots do not join teams or channels automatically.');
+  });
+
+  it('offers and dispatches Mattermost as a first-class initial setup option', async () => {
+    expect(initialChannelOptions()).toContainEqual({
+      value: 'mattermost',
+      label: 'Yes, connect Mattermost',
+      hint: 'self-hosted or cloud',
+    });
+    const calls: unknown[][] = [];
+    await runInitialChannel('mattermost', 'Ethan', async (...args) => {
+      calls.push(args);
+    });
+    expect(calls).toEqual([['mattermost', 'Ethan', { offerBack: true }]]);
+    expect(channelDmLabel('mattermost')).toBe('Mattermost DMs');
   });
 
   it('installs and runs focused adapter regressions with the registration test', () => {
