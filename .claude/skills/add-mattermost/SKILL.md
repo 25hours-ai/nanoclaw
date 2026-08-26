@@ -45,7 +45,7 @@ Probe a configured URL and the conventional local endpoints. The detector
 always returns structured output: `found` binds `base_url`; `none` leaves it
 for the guarded prompt below.
 
-```nc:run capture:discovery=.discovery,base_url=.base_url effect:fetch
+```nc:run capture:discovery=.discovery,base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch
 node .claude/skills/add-mattermost/scripts/discover-server.mjs
 ```
 
@@ -53,11 +53,58 @@ node .claude/skills/add-mattermost/scripts/discover-server.mjs
 No healthy configured or local Mattermost server was detected. If you have a remote server, provide its URL next. Otherwise install the local evaluation server by following LOCAL_SERVER.md, then provide http://localhost:8065.
 ```
 
-```nc:prompt base_url when:discovery=none normalize:rstrip-slash validate:^https?://[A-Za-z0-9._~:%/?#\[\]@!&()*+,;=-]+$
+```nc:prompt base_url when:discovery=none normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
 Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
 ```
 
-### 2. Copy and register the channel
+### 2. Align the server's canonical URL
+
+Mattermost Desktop opens its WebSocket with the configured server URL as the
+Origin. Before installing the adapter, make `ServiceSettings.SiteURL` exactly
+match `{{base_url}}`. Keep `ServiceSettings.WebsocketURL` blank; it is not the
+fix for an origin mismatch. Do not broaden `ServiceSettings.AllowCorsFrom`.
+
+When discovery found host-local `mmctl`, ask before changing the server:
+
+```nc:prompt site_url_action normalize:lower validate:^(set|already)$ when:config_access=host
+Enter `set` to set Mattermost's canonical SiteURL to {{base_url}} and keep WebsocketURL blank, or `already` only if those settings are already correct.
+```
+
+```nc:run effect:external when:site_url_action=set
+mmctl config set ServiceSettings.SiteURL "{{base_url}}" --local
+mmctl config set ServiceSettings.WebsocketURL "" --local
+```
+
+When discovery found `mmctl` inside a local Mattermost container, ask before
+changing it there:
+
+```nc:prompt site_url_action_docker normalize:lower validate:^(set|already)$ when:config_access=docker
+Enter `set` to configure {{mattermost_container}} with canonical SiteURL {{base_url}} and a blank WebsocketURL, or `already` only if those settings are already correct.
+```
+
+```nc:run effect:external when:site_url_action_docker=set
+docker exec "{{mattermost_container}}" mmctl config set ServiceSettings.SiteURL "{{base_url}}" --local
+docker exec "{{mattermost_container}}" mmctl config set ServiceSettings.WebsocketURL "" --local
+```
+
+If local configuration access is unavailable, tell the operator:
+
+```nc:operator when:config_access=unavailable
+Set Mattermost ServiceSettings.SiteURL to exactly {{base_url}} and leave ServiceSettings.WebsocketURL blank before continuing. Either sign in as a System Admin with mmctl and run `mmctl config set ServiceSettings.SiteURL "{{base_url}}"` plus `mmctl config set ServiceSettings.WebsocketURL ""`, or use System Console → Environment → Web Server. Do not work around the mismatch with a broad ServiceSettings.AllowCorsFrom value.
+```
+
+```nc:prompt site_url_ready normalize:lower validate:^ready$ when:config_access=unavailable
+Enter `ready` after the Mattermost settings above are saved.
+```
+
+Verify the effective client configuration through Mattermost's public client
+config endpoint. This must print `{{base_url}}` followed by a blank line:
+
+```nc:run effect:fetch
+curl -fsS "{{base_url}}/api/v4/config/client?format=old" | jq -er --arg url "{{base_url}}" '(.SiteURL == $url and (.WebsocketURL // "") == "") as $ok | if $ok then .SiteURL, (.WebsocketURL // "") else error("Mattermost SiteURL/WebsocketURL mismatch") end'
+```
+
+### 3. Copy and register the channel
 
 Copy the canonical adapter and registration test from the `channels` branch.
 
@@ -97,7 +144,7 @@ ws@8.21.3
 @types/ws@8.18.1
 ```
 
-### 3. Create and authenticate the bot
+### 4. Create and authenticate the bot
 
 Tell the operator:
 
@@ -121,7 +168,7 @@ token, or bot-account status is wrong.
 curl -sf "{{base_url}}/api/v4/users/me" -H "Authorization: Bearer {{bot_token}}"
 ```
 
-### 4. Configure authenticated card callbacks
+### 5. Configure authenticated card callbacks
 
 Approvals require Mattermost itself—not the browser—to reach NanoClaw. Ask for
 a URL routable from the Mattermost server. It may be NanoClaw's base URL or the
@@ -153,7 +200,7 @@ Tell the operator:
 From the Mattermost server, verify the callback host is reachable. For a private host or Docker bridge name, add that hostname or IP under System Console → Environment → Developer → Allow untrusted internal connections. Use a publicly trusted HTTPS certificate in production.
 ```
 
-### 5. Resolve the owner's DM
+### 6. Resolve the owner's DM
 
 Ask for the Mattermost username that will own this NanoClaw installation.
 
@@ -174,7 +221,7 @@ curl -sf -X POST "{{base_url}}/api/v4/channels/direct" -H "Authorization: Bearer
 The resolved `platform_id` and `owner_username` are used by
 `/init-first-agent`. If an owner exists, use `/manage-channels` instead.
 
-### 6. Build, test, and restart
+### 7. Build, test, and restart
 
 Build the composed host to guard the typed Chat SDK bridge call and dependency.
 
@@ -238,13 +285,11 @@ later mentions until that card is resolved.
 **Desktop messages appear only after a manual refresh.** This is usually the
 Desktop client's WebSocket origin being rejected. Keep the Desktop server URL,
 `MATTERMOST_BASE_URL`, and Mattermost `ServiceSettings.SiteURL` on the same
-canonical hostname. Check server logs for `request origin not allowed`, and
-verify `/api/v4/websocket` returns `101 Switching Protocols` for that Origin.
-For a local server that genuinely needs both hostnames, persist a space-separated
-`ServiceSettings.AllowCorsFrom` containing `http://localhost:8065` and
-`http://127.0.0.1:8065`; do not use `*`. Preview images may regenerate
-`config.json` on restart, so make the setting part of container startup rather
-than relying on an in-container edit.
+canonical hostname. Leave `ServiceSettings.WebsocketURL` blank, verify the
+effective values through `/api/v4/config/client?format=old`, and check server
+logs for `request origin not allowed`. Do not mask a canonical-URL mismatch by
+broadening `ServiceSettings.AllowCorsFrom`. For Compose installations, persist
+SiteURL declaratively so container recreation does not discard the fix.
 
 **Cards render but clicks do nothing.** From the Mattermost server, POST to the
 callback URL. A `401` proves the path reaches NanoClaw; timeout or refusal means
