@@ -24,7 +24,11 @@ type ChannelRunner = (
 export function initialChannelOptions(): { value: ChannelChoice; label: string; hint?: string }[] {
   return [
     { value: 'slack', label: 'Yes, connect Slack', hint: 'NEW!! one-click install' },
-    { value: 'mattermost', label: 'Yes, connect Mattermost', hint: 'self-hosted or cloud' },
+    {
+      value: 'mattermost',
+      label: 'Yes, connect Mattermost',
+      hint: 'use your server or create an evaluation server',
+    },
     { value: 'teams', label: 'Yes, connect Microsoft Teams' },
     { value: 'telegram', label: 'Yes, connect Telegram' },
     { value: 'discord', label: 'Yes, connect Discord' },

@@ -13,23 +13,23 @@ const compose = readFileSync('.claude/skills/add-mattermost/assets/compose.yml',
 describe('Mattermost bot setup guidance', () => {
   it('distinguishes enabling bot creation from creating the bot', () => {
     expect(skill).toContain(
-      'System Console → Integrations → Bot Accounts and turn on Enable Bot Account Creation',
+      'System Console → Integrations → Bot Accounts. Turn on Enable Bot Account Creation',
     );
     expect(skill).toContain(
-      'Product menu → Integrations → Bot Accounts, select Add Bot Account',
+      'Open Product menu → Integrations → Bot Accounts. Select Add Bot Account',
     );
-    expect(skill).toContain('This setting only permits bot creation; it is not where bots are created.');
+    expect(skill).toContain('This setting permits bot creation. You do not create the bot on this page.');
   });
 
   it('requires both team and channel membership', () => {
-    expect(skill).toContain('Bots do not join teams or channels automatically.');
+    expect(skill).toContain('Mattermost does not add bots to teams or channels automatically.');
   });
 
   it('offers and dispatches Mattermost as a first-class initial setup option', async () => {
     expect(initialChannelOptions()).toContainEqual({
       value: 'mattermost',
       label: 'Yes, connect Mattermost',
-      hint: 'self-hosted or cloud',
+      hint: 'use your server or create an evaluation server',
     });
     const calls: unknown[][] = [];
     await runInitialChannel('mattermost', 'Ethan', async (...args) => {
@@ -48,13 +48,14 @@ describe('Mattermost bot setup guidance', () => {
   });
 
   it('requires the operator to choose how a detected server is used', () => {
-    expect(skill).toContain('detection never selects a server on your behalf');
+    expect(skill).toContain('The user must select the server');
     expect(skill).toContain('validate:^(use|enter|create)$');
-    expect(skill).toContain('`enter` to provide another Mattermost URL');
-    expect(skill).toContain('`create` for a new local evaluation/development server');
-    expect(skill).toContain('Never select a detected server on the user\'s behalf');
-    expect(skill).toContain('Enter `install` to approve creating and starting those local resources');
-    expect(skill).toContain('port 8065 must be free');
+    expect(skill).toContain('Enter `enter` to specify a different Mattermost URL');
+    expect(skill).toContain('Enter `create` to create a local evaluation server');
+    expect(skill).toContain('Do not select a');
+    expect(skill).toContain('server automatically');
+    expect(skill).toContain('Enter `install` to create and start these local resources');
+    expect(skill).toContain('Port 8065 must be free');
     expect(skill).toContain('for attempt in $(seq 1 30)');
     expect(skill).toContain('curl -fsS --connect-timeout 1 --max-time 1');
     expect(skill).toContain('docker info >/dev/null');
@@ -64,7 +65,7 @@ describe('Mattermost bot setup guidance', () => {
   it('configures and verifies the exact canonical SiteURL without weakening origin checks', () => {
     expect(skill).toContain('mmctl config set ServiceSettings.SiteURL "{{base_url}}" --local');
     expect(skill).toContain('/api/v4/config/client?format=old');
-    expect(skill).toContain('Do not broaden `ServiceSettings.AllowCorsFrom`');
+    expect(skill).toContain('Do not change\n`ServiceSettings.AllowCorsFrom` to correct an Origin error');
     expect(skill).toContain('System Console → Environment → Web Server');
     expect(skill).toContain('config_access=docker');
     expect(skill).toContain(
@@ -99,7 +100,7 @@ describe('Mattermost bot setup guidance', () => {
   it('keeps the evaluation server canonical and declarative', () => {
     expect(compose).toContain('MM_SERVICESETTINGS_SITEURL: "http://localhost:8065"');
     expect(compose).not.toContain('MM_SERVICESETTINGS_ALLOWCORSFROM');
-    expect(localServer).toContain('`WebsocketURL` stays blank');
+    expect(localServer).toContain('Keep `WebsocketURL` blank');
     expect(localServer).toContain('/api/v4/config/client?format=old');
   });
 });

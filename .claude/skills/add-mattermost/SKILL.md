@@ -23,10 +23,10 @@ base URL.
 3. Inspect Docker/Compose for Mattermost containers. If a matching container
    exists but is stopped, offer to start it; do not start or recreate it
    without the user's approval.
-4. If a healthy server is found, show its URL and ask whether to use it, enter
-   another URL, or create the bundled local evaluation/development server.
-   Never select a detected server on the user's behalf. Treat localhost and
-   127.0.0.1 endpoints for the same container as one detection.
+4. If you find a healthy server, show its URL. Ask the user to use this server,
+   enter a different URL, or create the local evaluation server. Do not select a
+   server automatically. Treat the localhost and 127.0.0.1 endpoints for the
+   same container as one server.
 5. If nothing local is found, ask whether the user has a remote Mattermost.
    If not, offer the local evaluation installation in
    [LOCAL_SERVER.md](LOCAL_SERVER.md). Read that file only for local server
@@ -41,20 +41,19 @@ data, so show what will be created and get approval first.
 
 ### 1. Detect the server
 
-Probe a configured URL and the conventional local endpoints. Detection is only
-a suggestion: always let the operator confirm it, enter another URL, or create
-the bundled local evaluation/development server.
+Test the configured URL and the standard local URLs. A detected server is only
+a suggestion. The user must select the server.
 
 ```nc:run capture:discovery=.discovery,detected_url=.base_url,detected_config_access=.config_access,detected_container=.mattermost_container effect:fetch
 node .claude/skills/add-mattermost/scripts/discover-server.mjs
 ```
 
 ```nc:operator when:discovery=found
-A healthy Mattermost server was detected at {{detected_url}}. Confirm whether to use it; detection never selects a server on your behalf.
+NanoClaw found a healthy Mattermost server at {{detected_url}}. You can use this server, enter a different URL, or create a local evaluation server.
 ```
 
 ```nc:prompt server_choice when:discovery=found normalize:lower validate:^(use|enter|create)$
-Enter `use` for {{detected_url}}, `enter` to provide another Mattermost URL, or `create` for a new local evaluation/development server.
+Enter `use` to use {{detected_url}}. Enter `enter` to specify a different Mattermost URL. Enter `create` to create a local evaluation server.
 ```
 
 ```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:server_choice=use
@@ -62,7 +61,7 @@ node .claude/skills/add-mattermost/scripts/select-server.mjs use "{{detected_url
 ```
 
 ```nc:prompt entered_url when:server_choice=enter normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
-Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
+Enter the Mattermost base URL. Include the scheme, for example `https://mattermost.example.com`.
 ```
 
 ```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:server_choice=enter
@@ -74,15 +73,15 @@ printf 'yes\n'
 ```
 
 ```nc:operator when:discovery=none
-No healthy configured or local Mattermost server was detected. Choose whether to enter an existing remote server URL or create the bundled local evaluation/development server.
+NanoClaw did not find a healthy Mattermost server. You can enter a server URL or create a local evaluation server.
 ```
 
 ```nc:prompt no_server_choice when:discovery=none normalize:lower validate:^(enter|create)$
-Enter `enter` to provide a Mattermost URL or `create` for a new local evaluation/development server.
+Enter `enter` to specify a Mattermost URL. Enter `create` to create a local evaluation server.
 ```
 
 ```nc:prompt entered_url_new when:no_server_choice=enter normalize:rstrip-slash validate:^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%+-]+)*$
-Mattermost base URL including the scheme, such as `https://mattermost.example.com`.
+Enter the Mattermost base URL. Include the scheme, for example `https://mattermost.example.com`.
 ```
 
 ```nc:run capture:base_url=.base_url,config_access=.config_access,mattermost_container=.mattermost_container effect:fetch when:no_server_choice=enter
@@ -93,19 +92,19 @@ node .claude/skills/add-mattermost/scripts/select-server.mjs enter "{{entered_ur
 printf 'yes\n'
 ```
 
-Tell the operator exactly what local creation does, then obtain approval:
+Explain what the installation creates. Give the user time to review the details. Then get approval.
 
 ```nc:operator when:create_requested=yes
-Creating the local evaluation/development server will start Mattermost Team Edition and PostgreSQL containers, create a Docker network and named persistent volumes, write reproducible files under .nanoclaw/mattermost, and bind 127.0.0.1:8065. Docker and Compose must be available and port 8065 must be free. If another server uses that port, this installer will stop without changing it.
+The local evaluation server runs Mattermost Team Edition and PostgreSQL in containers. The installation creates a Docker network and named volumes. It saves configuration files in .nanoclaw/mattermost. It binds the server to 127.0.0.1:8065. You need Docker and Docker Compose. Port 8065 must be free. If the port is in use, the installation stops and makes no changes.
 ```
 
 ```nc:prompt local_install_approval when:create_requested=yes normalize:lower validate:^install$
-Enter `install` to approve creating and starting those local resources.
+Enter `install` to create and start these local resources.
 ```
 
-After approval, verify prerequisites, create the reproducible stack, and wait
-at most 60 seconds for Mattermost. On failure, show bounded service logs and
-stop; do not claim the server exists.
+After approval, verify the requirements and create the stack. Wait for a
+maximum of 60 seconds for Mattermost. If the operation fails, show the last
+100 service log lines and stop.
 
 ```nc:run effect:external when:local_install_approval=install
 docker info >/dev/null
@@ -125,17 +124,18 @@ exit 1
 node .claude/skills/add-mattermost/scripts/select-server.mjs create
 ```
 
-### 2. Align the server's canonical URL
+### 2. Set the server SiteURL
 
-Mattermost Desktop opens its WebSocket with the configured server URL as the
-Origin. Before installing the adapter, make `ServiceSettings.SiteURL` exactly
-match `{{base_url}}`. Keep `ServiceSettings.WebsocketURL` blank; it is not the
-fix for an origin mismatch. Do not broaden `ServiceSettings.AllowCorsFrom`.
+Mattermost Desktop sends its configured server URL as the WebSocket Origin.
+Before you install the adapter, set `ServiceSettings.SiteURL` to the same URL:
+`{{base_url}}`. Keep
+`ServiceSettings.WebsocketURL` blank. Do not change
+`ServiceSettings.AllowCorsFrom` to correct an Origin error.
 
 When discovery found host-local `mmctl`, ask before changing the server:
 
 ```nc:prompt site_url_action normalize:lower validate:^(set|already)$ when:config_access=host
-Enter `set` to set Mattermost's canonical SiteURL to {{base_url}} and keep WebsocketURL blank, or `already` only if those settings are already correct.
+Enter `set` to set SiteURL to {{base_url}} and clear WebsocketURL. Enter `already` if these values are already correct.
 ```
 
 ```nc:run effect:external when:site_url_action=set
@@ -147,7 +147,7 @@ When discovery found `mmctl` inside a local Mattermost container, ask before
 changing it there:
 
 ```nc:prompt site_url_action_docker normalize:lower validate:^(set|already)$ when:config_access=docker
-Enter `set` to configure {{mattermost_container}} with canonical SiteURL {{base_url}} and a blank WebsocketURL, or `already` only if those settings are already correct.
+Enter `set` to set SiteURL to {{base_url}} in {{mattermost_container}} and clear WebsocketURL. Enter `already` if these values are already correct.
 ```
 
 ```nc:run effect:external when:site_url_action_docker=set
@@ -158,15 +158,15 @@ docker exec "{{mattermost_container}}" mmctl config set ServiceSettings.Websocke
 If local configuration access is unavailable, tell the operator:
 
 ```nc:operator when:config_access=unavailable
-Set Mattermost ServiceSettings.SiteURL to exactly {{base_url}} and leave ServiceSettings.WebsocketURL blank before continuing. Either sign in as a System Admin with mmctl and run `mmctl config set ServiceSettings.SiteURL "{{base_url}}"` plus `mmctl config set ServiceSettings.WebsocketURL ""`, or use System Console → Environment → Web Server. Do not work around the mismatch with a broad ServiceSettings.AllowCorsFrom value.
+Set Mattermost ServiceSettings.SiteURL to {{base_url}}. Leave ServiceSettings.WebsocketURL blank. As a System Admin, run `mmctl config set ServiceSettings.SiteURL "{{base_url}}"`. Run `mmctl config set ServiceSettings.WebsocketURL ""`. You can also use System Console → Environment → Web Server. Do not change ServiceSettings.AllowCorsFrom to correct an Origin error.
 ```
 
 ```nc:prompt site_url_ready normalize:lower validate:^ready$ when:config_access=unavailable
-Enter `ready` after the Mattermost settings above are saved.
+Enter `ready` after you save these Mattermost settings.
 ```
 
-Verify the effective client configuration through Mattermost's public client
-config endpoint. This must print `{{base_url}}` followed by a blank line:
+Use the public client configuration endpoint to verify the settings. The
+command must print `{{base_url}}` and then a blank line.
 
 ```nc:run effect:fetch
 curl -fsS "{{base_url}}/api/v4/config/client?format=old" | jq -er --arg url "{{base_url}}" '(.SiteURL == $url and (.WebsocketURL // "") == "") as $ok | if $ok then .SiteURL, (.WebsocketURL // "") else error("Mattermost SiteURL/WebsocketURL mismatch") end'
@@ -219,12 +219,12 @@ ws@8.21.3
 Tell the operator:
 
 ```nc:operator
-Create a dedicated Mattermost bot:
-1. As a System Admin, open System Console → Integrations → Bot Accounts and turn on Enable Bot Account Creation if it is disabled. This setting only permits bot creation; it is not where bots are created.
-2. Return to the Mattermost workspace, open the Product menu → Integrations → Bot Accounts, select Add Bot Account, and create a bot such as `nanoclaw`.
-3. Copy the access token shown after creation.
-4. Add the bot to every team and channel where it should receive messages. Bots do not join teams or channels automatically.
-5. Keep the token private. If it is lost, create a new token and deactivate the obsolete one after replacement.
+Now create a Mattermost bot for NanoClaw:
+1. As a System Admin, open System Console → Integrations → Bot Accounts. Turn on Enable Bot Account Creation. This setting permits bot creation. You do not create the bot on this page.
+2. Return to the Mattermost workspace. Open Product menu → Integrations → Bot Accounts. Select Add Bot Account. Create a bot, for example `nanoclaw`.
+3. Copy the access token.
+4. Add the bot to each required team and channel. Mattermost does not add bots to teams or channels automatically.
+5. Keep the token secret. If you lose the token, create a replacement. Deactivate the old token after the replacement works.
 ```
 
 ```nc:prompt bot_token secret normalize:trim validate:^[A-Za-z0-9_-]{20,}$
@@ -255,15 +255,14 @@ the server-only callback context.
 openssl rand -hex 32
 ```
 
-Update the selected canonical URL on every run so choosing another server
-corrects an existing installation. Keep existing credentials unchanged.
+Update `MATTERMOST_BASE_URL` on each run. This update lets the user select a
+different server. Do not change existing credentials.
 
 ```nc:run effect:external
 pnpm exec tsx setup/index.ts --step set-env -- --key MATTERMOST_BASE_URL --value "{{base_url}}"
 ```
 
-Store the remaining channel configuration. Existing credential keys remain
-unchanged on a re-run.
+Store the other channel settings. Do not replace existing credentials.
 
 ```nc:env-set
 MATTERMOST_BASE_URL={{base_url}}
@@ -275,7 +274,7 @@ MATTERMOST_CALLBACK_SECRET={{callback_secret}}
 Tell the operator:
 
 ```nc:operator
-From the Mattermost server, verify the callback host is reachable. For a private host or Docker bridge name, add that hostname or IP under System Console → Environment → Developer → Allow untrusted internal connections. Use a publicly trusted HTTPS certificate in production.
+Make sure that the Mattermost server can reach the callback host. For a private host or Docker bridge name, add the host name or IP address in System Console → Environment → Developer → Allow untrusted internal connections. Use a publicly trusted HTTPS certificate in production.
 ```
 
 ### 6. Resolve the owner's DM
@@ -307,8 +306,8 @@ Build the composed host to guard the typed Chat SDK bridge call and dependency.
 pnpm run build
 ```
 
-Run the registration test through the real channel barrel and the focused
-adapter regressions installed beside the implementation.
+Run the registration test through the channel barrel. Also run the installed
+adapter regression tests.
 
 ```nc:run effect:test
 pnpm exec vitest run src/channels/mattermost-registration.test.ts src/channels/mattermost-adapter/adapter.test.ts src/channels/mattermost-adapter/websocket.test.ts
@@ -361,14 +360,13 @@ changes are observed, but restarting NanoClaw forces a fresh subscription.
 NanoClaw holds the first message behind a channel-approval card and deduplicates
 later mentions until that card is resolved.
 
-**Desktop messages appear only after a manual refresh.** This is usually the
-Desktop client's WebSocket origin being rejected. Keep the Desktop server URL,
-`MATTERMOST_BASE_URL`, and Mattermost `ServiceSettings.SiteURL` on the same
-canonical hostname. Leave `ServiceSettings.WebsocketURL` blank, verify the
-effective values through `/api/v4/config/client?format=old`, and check server
-logs for `request origin not allowed`. Do not mask a canonical-URL mismatch by
-broadening `ServiceSettings.AllowCorsFrom`. For Compose installations, persist
-SiteURL declaratively so container recreation does not discard the fix.
+**Desktop messages appear only after a manual refresh.** The server can reject
+the WebSocket Origin. Use the same host name in the Desktop server URL,
+`MATTERMOST_BASE_URL`, and `ServiceSettings.SiteURL`. Keep
+`ServiceSettings.WebsocketURL` blank. Verify the values through
+`/api/v4/config/client?format=old`. Check the server logs for `request origin
+not allowed`. Do not change `ServiceSettings.AllowCorsFrom` to correct this
+error. For a Compose installation, set SiteURL in the Compose configuration.
 
 **Cards render but clicks do nothing.** From the Mattermost server, POST to the
 callback URL. A `401` proves the path reaches NanoClaw; timeout or refusal means
