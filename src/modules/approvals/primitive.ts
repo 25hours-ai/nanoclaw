@@ -160,21 +160,23 @@ export async function pickApprover(agentGroupId: string | null): Promise<string[
  * pair we can actually deliver to. Returns null if nobody is reachable.
  *
  * Tie-break: prefer approvers reachable on the same channel kind as the
- * origin; else first in list. Resolution uses ensureUserDm, which may
- * trigger a platform openDM call on cache miss.
+ * origin; else first in list. A same-channel origin resolves through its
+ * exact adapter instance.
  */
 export async function pickApprovalDelivery(
   approvers: string[],
   originChannelType: string,
+  originInstance?: string,
 ): Promise<{ userId: string; messagingGroup: MessagingGroup } | null> {
   if (originChannelType) {
     for (const userId of approvers) {
       if (channelTypeOf(userId) !== originChannelType) continue;
-      const mg = await ensureUserDm(userId);
+      const mg = await ensureUserDm(userId, originInstance === undefined ? undefined : { instance: originInstance });
       if (mg) return { userId, messagingGroup: mg };
     }
   }
   for (const userId of approvers) {
+    if (originChannelType && channelTypeOf(userId) === originChannelType) continue;
     const mg = await ensureUserDm(userId);
     if (mg) return { userId, messagingGroup: mg };
   }
@@ -233,11 +235,10 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     return;
   }
 
-  const originChannelType = session.messaging_group_id
-    ? ((await getMessagingGroup(session.messaging_group_id))?.channel_type ?? '')
-    : '';
+  const origin = session.messaging_group_id ? await getMessagingGroup(session.messaging_group_id) : undefined;
+  const originChannelType = origin?.channel_type ?? '';
 
-  const target = await pickApprovalDelivery(approvers, originChannelType);
+  const target = await pickApprovalDelivery(approvers, originChannelType, origin?.instance);
   if (!target) {
     await notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
     return;
@@ -252,9 +253,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     action,
     payload: JSON.stringify(payload),
     created_at: new Date().toISOString(),
-    // The bot identity this card goes out as. This flow persists no delivery
-    // address (it has no card-edit path today), but the instance is the one
-    // piece that cannot be re-derived later, so record it while we hold it.
+    channel_type: target.messagingGroup.channel_type,
+    platform_id: target.messagingGroup.platform_id,
     instance: target.messagingGroup.instance ?? null,
     title,
     question,
@@ -277,6 +277,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
           question,
           options: APPROVAL_OPTIONS,
         }),
+        undefined,
+        target.messagingGroup.instance,
       );
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
