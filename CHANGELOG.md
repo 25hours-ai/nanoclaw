@@ -4,6 +4,8 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+- **Two install-wide model knobs.** `NANOCLAW_DEFAULT_MODEL` fills in the model for agent groups that have not set one of their own (a group's own model always wins), and `NANOCLAW_FAST_MODE=1` turns on the API's fast serving tier for every agent — faster output at a higher per-token price. Both are read from the host `.env` when container.json is materialized, so a change takes effect at the next container start with no restart of the host. Installs that set neither are unaffected: neither field is written to container.json and the provider sends exactly the options it sent before.
+
 - [BREAKING] **Agents now receive their capability instructions.** `CLAUDE.md` was a list of `@` imports into `/app`; Claude Code silently drops imports resolving outside the project directory, so eight of nine instruction sections never reached the model. It is now one flat file with every source inlined, shared with the Codex provider. Customized source breaks on two surfaces: `src/claude-md-compose.ts` is now `src/project-doc-compose.ts` with `composeGroupClaudeMd(group)` becoming `composeGroupProjectDoc(group, groupDir, spec)`, and the `/app/CLAUDE.md` and `/workspace/agent/.claude-fragments` mounts are gone. **Migration:** `grep -rn "claude-md-compose\|composeGroupClaudeMd\|claude-fragments" src/ setup/ scripts/` — no hits means nothing to do; otherwise repoint the import and pass `DEFAULT_PROJECT_DOC` as the third argument. Then clear the leftovers once: `rm -rf groups/*/.claude-fragments groups/*/.claude-shared.md` — they are inert (nothing reads them) but sit in the agent's working directory.
 
 ## [2.3.0] - 2026-08-24
