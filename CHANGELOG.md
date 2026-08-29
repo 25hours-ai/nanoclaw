@@ -4,6 +4,8 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+- **Quoted `.env` values now read the same everywhere.** Setup had its own `.env` parser that did not strip surrounding quotes, so a hand-edited `TZ="America/New_York"` or `NANOCLAW_TEMPLATE_PATH="/opt/my templates"` reached the wizard with the quotes still attached — the template path was then bridged into `process.env` unusable. Both readers now share the host parser (`envValue` in `src/env.ts`, the single-key form of `readEnvFile`).
+
 - [BREAKING] **Agents now receive their capability instructions.** `CLAUDE.md` was a list of `@` imports into `/app`; Claude Code silently drops imports resolving outside the project directory, so eight of nine instruction sections never reached the model. It is now one flat file with every source inlined, shared with the Codex provider. Customized source breaks on two surfaces: `src/claude-md-compose.ts` is now `src/project-doc-compose.ts` with `composeGroupClaudeMd(group)` becoming `composeGroupProjectDoc(group, groupDir, spec)`, and the `/app/CLAUDE.md` and `/workspace/agent/.claude-fragments` mounts are gone. **Migration:** `grep -rn "claude-md-compose\|composeGroupClaudeMd\|claude-fragments" src/ setup/ scripts/` — no hits means nothing to do; otherwise repoint the import and pass `DEFAULT_PROJECT_DOC` as the third argument. Then clear the leftovers once: `rm -rf groups/*/.claude-fragments groups/*/.claude-shared.md` — they are inert (nothing reads them) but sit in the agent's working directory.
 
 ## [2.3.0] - 2026-08-24
