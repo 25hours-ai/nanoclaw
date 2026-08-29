@@ -90,7 +90,9 @@ export interface GatewayApprovalSubscription {
  *   restart). Returns false when the gateway no longer holds the request.
  */
 export interface GatewayApprovalSource {
-  subscribe(handler: (request: GatewayApprovalRequest) => Promise<GatewayApprovalDecision>): GatewayApprovalSubscription;
+  subscribe(
+    handler: (request: GatewayApprovalRequest) => Promise<GatewayApprovalDecision>,
+  ): GatewayApprovalSubscription;
   listPending?(): Promise<GatewayApprovalRequest[]>;
   decide?(requestId: string, decision: GatewayApprovalDecision): Promise<boolean>;
 }

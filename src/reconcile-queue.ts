@@ -21,7 +21,13 @@
  * a tick only after the tick's work is done.
  */
 import { log } from './log.js';
-import { sessionIdOf, type ReconcileFn, type ReconcileKey, type ReconcileQueue, type SingletonKey } from './reconcile.js';
+import {
+  sessionIdOf,
+  type ReconcileFn,
+  type ReconcileKey,
+  type ReconcileQueue,
+  type SingletonKey,
+} from './reconcile.js';
 
 const INITIAL_BACKOFF_MS = 5_000;
 // Bounded under the 60s resync floor: a longer backoff would always be beaten

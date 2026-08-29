@@ -31,7 +31,12 @@ import {
   type GatewayProvider,
 } from '../../gateway-providers/index.js';
 import type { PendingApproval } from '../../types.js';
-import { ONECLI_ACTION, resolveOneCLIApproval, startOneCLIApprovalHandler, stopOneCLIApprovalHandler } from './onecli-approvals.js';
+import {
+  ONECLI_ACTION,
+  resolveOneCLIApproval,
+  startOneCLIApprovalHandler,
+  stopOneCLIApprovalHandler,
+} from './onecli-approvals.js';
 
 const TEST_DIR = '/tmp/nanoclaw-test-restart-honesty';
 
@@ -156,7 +161,12 @@ describe('row-keyed resolution after a restart', () => {
 
 describe('re-attach at startup', () => {
   it('expires overdue rows honestly and keeps still-open rows decidable', async () => {
-    await seedRow({ approval_id: 'oa-overdue1', request_id: 'req-old', expires_at: iso(-5_000), platform_message_id: 'pm-old' });
+    await seedRow({
+      approval_id: 'oa-overdue1',
+      request_id: 'req-old',
+      expires_at: iso(-5_000),
+      platform_message_id: 'pm-old',
+    });
     await seedRow({ approval_id: 'oa-alive001', request_id: 'req-new', expires_at: iso(120_000) });
 
     startOneCLIApprovalHandler(captureAdapter);

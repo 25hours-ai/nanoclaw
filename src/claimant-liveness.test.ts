@@ -96,7 +96,12 @@ describe('claimant liveness', () => {
   });
 
   it('takes over when the holder lease is expired', async () => {
-    await registerHostInstance({ instanceId: 'peer-dead', installId: 'x', now: now(-120_000), leaseExpiresAt: now(-30_000) });
+    await registerHostInstance({
+      instanceId: 'peer-dead',
+      installId: 'x',
+      now: now(-120_000),
+      leaseExpiresAt: now(-30_000),
+    });
     await tryClaimSession({ sessionId: 'sess-1', instanceId: 'peer-dead', expectedIncarnation: 0, now: now() });
 
     snapshots.push(fakeRunningHandle('sess-1', 'container-orphaned'));

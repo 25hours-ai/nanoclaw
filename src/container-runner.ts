@@ -448,7 +448,11 @@ function registerRuntime(
  * fresh spawn has already replaced resolves its own waiters and touches
  * nothing else (the in-process half of the stale-finish fence).
  */
-async function finishAndResolve(sessionId: string, runtime: ActiveSessionRuntime, failure?: SessionFailure): Promise<void> {
+async function finishAndResolve(
+  sessionId: string,
+  runtime: ActiveSessionRuntime,
+  failure?: SessionFailure,
+): Promise<void> {
   if (runtime.finished) return;
   runtime.finished = true;
   if (activeContainers.get(sessionId) !== runtime) {
