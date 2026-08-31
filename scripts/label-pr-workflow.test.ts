@@ -24,7 +24,21 @@ type ComputeLabels = (args: {
   currentLabels?: string[];
 }) => LabelDecision;
 
-function extractComputeLabels(): ComputeLabels {
+type DecideCompliance = (args: {
+  body?: string | null;
+  add: string[];
+  currentLabels?: string[];
+}) => { state: 'success' | 'failure' | null };
+
+type ShouldPostComplianceComment = (state: string | null, existingCommentBodies: Array<string | null>) => boolean;
+
+interface ExtractedLogic {
+  computeLabels: ComputeLabels;
+  decideCompliance: DecideCompliance;
+  shouldPostComplianceComment: ShouldPostComplianceComment;
+}
+
+function extractLogic(): ExtractedLogic {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'label-pr.yml'),
     'utf8',
@@ -41,18 +55,33 @@ function extractComputeLabels(): ComputeLabels {
     .slice(1) // drop the START marker line itself
     .map((line) => line.replace(/^ {12}/, ''))
     .join('\n');
-  return new Function(`${code}\nreturn computeLabels;`)() as ComputeLabels;
+  return new Function(
+    `${code}\nreturn { computeLabels, decideCompliance, shouldPostComplianceComment };`,
+  )() as ExtractedLogic;
 }
 
-const computeLabels = extractComputeLabels();
+const { computeLabels, decideCompliance, shouldPostComplianceComment } = extractLogic();
+
+/** Full pipeline as the driver runs it: parse, then judge compliance. */
+function complianceFor(body: string, title: string, currentLabels: string[] = []) {
+  const { add } = computeLabels({ body, title, author: 'drive-by-contributor', currentLabels });
+  return decideCompliance({ body, add, currentLabels });
+}
+
+/** Raw workflow text, for fixtures that couple prose promises to parser behavior. */
+function workflowText(): string {
+  return fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'label-pr.yml'), 'utf8');
+}
 
 const V2 = '<!-- nanoclaw-pr-template:v2 -->\n';
+/** The kind boxes the PR template offers, i.e. every kind a verdict can name. */
+const TEMPLATE_KINDS = ['kind/bug', 'kind/feature', 'kind/documentation', 'kind/cleanup', 'kind/hardening'];
 // Blank template: no kind box, neither skill box. `skill: true` checks the
 // Skill box; `notSkill: true` checks the "Not a skill" box.
 const v2Body = (kinds: string[], opts: { skill?: boolean; notSkill?: boolean } = {}) =>
   V2 +
   '## Change kind\n' +
-  ['kind/bug', 'kind/feature', 'kind/documentation', 'kind/cleanup', 'kind/hardening']
+  TEMPLATE_KINDS
     .map((k) => `- [${kinds.includes(k) ? 'x' : ' '}] \`${k}\``)
     .join('\n') +
   '\n## Skill delivery\n' +
@@ -290,6 +319,72 @@ describe('v1 bodies (frozen pre-v2 behavior)', () => {
     const res = computeLabels({ body: null, title: null, author: FORK_AUTHOR });
     expect(res.add).toEqual([]);
     expect(res.remove).toEqual([]);
+  });
+});
+
+describe('template-compliance (report-only)', () => {
+  it('v2 body with zero kind verdict: failing status', () => {
+    expect(complianceFor(v2Body([]), 'Update stuff').state).toBe('failure');
+  });
+
+  it('good bodies are green: checkbox verdict, title fallback, or an already-applied kind', () => {
+    expect(complianceFor(v2Body(['kind/bug']), 'x').state).toBe('success');
+    expect(complianceFor(v2Body([]), 'fix: something').state).toBe('success');
+    // Maintainer classified at triage; blank body must NOT go red.
+    expect(complianceFor(v2Body([]), 'Update stuff', ['kind/cleanup']).state).toBe('success');
+  });
+
+  it('v1 and no-marker bodies are untouched: no status at all', () => {
+    expect(complianceFor('<!-- contributing-guide: v1 -->\n- [x] **Fix** - bug fix', 'x').state).toBeNull();
+    expect(complianceFor('just a hand-written body', 'fix: x').state).toBeNull();
+  });
+
+  it('the fix comment posts once, ever — idempotent across pushes', () => {
+    // First failing push: no comments yet -> post.
+    expect(shouldPostComplianceComment('failure', [])).toBe(true);
+    // Later pushes: our marker comment exists -> never repeat.
+    const marked = ['<!-- nanoclaw-template-compliance -->\nThis PR uses the v2 template…'];
+    expect(shouldPostComplianceComment('failure', marked)).toBe(false);
+    // Unrelated comments do not suppress it.
+    expect(shouldPostComplianceComment('failure', ['LGTM', null])).toBe(true);
+    // Green states never comment.
+    expect(shouldPostComplianceComment('success', [])).toBe(false);
+    expect(shouldPostComplianceComment(null, [])).toBe(false);
+  });
+
+  it('decideCompliance recognizes every kind computeLabels can emit', () => {
+    // computeLabels and decideCompliance share one MANAGED_KINDS declaration.
+    // This pins the property that declaration exists to protect: a kind the
+    // parser can emit must also count as a classification, so an honestly
+    // filled-in template can never leave the status red.
+    for (const kind of TEMPLATE_KINDS) {
+      const res = computeLabels({ body: v2Body([kind]), title: 'Update stuff', author: FORK_AUTHOR });
+      expect(res.add).toContain(kind);
+      expect(complianceFor(v2Body([kind]), 'Update stuff').state).toBe('success');
+      // Same kind arriving as maintainer triage rather than a checkbox.
+      expect(complianceFor(v2Body([]), 'Update stuff', [kind]).state).toBe('success');
+    }
+  });
+
+  it('every conventional-commit prefix the fix comment promises actually maps to a kind', () => {
+    // The comment tells contributors a conventional-commit title will classify
+    // the PR, and names the prefixes. Read them back out of that sentence so
+    // the promise cannot drift away from what the parser accepts.
+    const line = workflowText()
+      .split('\n')
+      .find((l) => l.includes('give the PR a conventional-commit title'));
+    expect(line, 'fix-comment prefix sentence not found in label-pr.yml').toBeDefined();
+    const promised = [...(line as string).matchAll(/`([a-z]+):`/g)].map((m) => m[1]);
+    expect(promised).toEqual(['fix', 'feat', 'docs', 'refactor', 'chore', 'ci', 'test', 'build', 'style', 'perf']);
+    for (const prefix of promised) {
+      const res = computeLabels({
+        body: v2Body([]),
+        title: `${prefix}: something`,
+        author: FORK_AUTHOR,
+        currentLabels: [],
+      });
+      expect(res.add.filter((l) => l.startsWith('kind/')), `prefix ${prefix}: promised a kind, got none`).toHaveLength(1);
+    }
   });
 });
 
